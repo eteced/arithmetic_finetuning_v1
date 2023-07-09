@@ -67,17 +67,56 @@ def arth_train_one_epoch(
 
         Text=Text.to(device)
         labels=labels.to(device)
-        trans_valid, trans_dense, trans_op = model(Text, start_pos = 0)
-        label_valid = torch.zeros_like(trans_valid)
-        label_valid[: 0] = 1
-        label_trans_op = torch.zeros_like(trans_op)
+        if args.step_mode == True:
+            trans_valid, trans_dense, trans_op, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = model(Text, start_pos = 0)
+        else:
+            trans_valid, trans_dense, trans_op = model(Text, start_pos = 0)
+        
+        if args.step_mode == False:
+            label_valid = torch.zeros_like(trans_valid)
+            label_valid[:, 0] = 1
+            label_trans_op = torch.zeros_like(trans_op)
+            label_trans_op[:, 0] = 1
 
-        pred_dense = trans_dense[:, 0]
-        loss_mse = torch.nn.MSELoss()
-        loss_cp = torch.nn.CrossEntropyLoss()
-        loss = 0.01 * loss_mse(pred_dense, labels) + 50 * loss_cp(trans_valid, label_valid) + 50 * loss_cp(trans_op, label_trans_op)
-        loss_value = loss.item()
-
+            pred_dense = trans_dense[:, 0]
+            loss_mse = torch.nn.MSELoss()
+            loss_cp = torch.nn.CrossEntropyLoss()
+            loss_bce = torch.nn.BCELoss()
+            loss_smooth_l1 = torch.nn.SmoothL1Loss(beta=0.01)
+            # print("max(label_valid)", torch.max(trans_valid, dim=1))
+            # loss = 0.01 * loss_mse(pred_dense, labels) + 50 * loss_cp(trans_valid, label_valid) + 50 * loss_cp(trans_op, label_trans_op)
+            loss = 50 * loss_smooth_l1(trans_valid, label_valid) + 50 * loss_cp(trans_op, label_trans_op)
+            # print("trans_op", trans_op[:, 0])
+            loss_value = loss.item()
+        else:
+            l_steps_ignore_logits, l_steps_tmp_moved_logits, l_steps_dense_op_logits, l_steps_dense_map_logits, l_steps_decimal_start_logits, l_steps_op_pred = gen_manual_aux_info(Text, 0)
+            o_steps_ignore_logits=[]
+            o_steps_tmp_moved_logits=[]
+            o_steps_dense_op_logits=[]
+            o_steps_dense_map_logits=[]
+            o_steps_decimal_start_logits=[]
+            loss_cp = torch.nn.CrossEntropyLoss()
+            for x in steps_ignore_logits:
+                o_steps_ignore_logits.append(x[0])
+            for x in steps_tmp_moved_logits:
+                o_steps_tmp_moved_logits.append(x[0])
+            for x in steps_dense_op_logits:
+                o_steps_dense_op_logits.append(x[0])
+            for x in steps_dense_map_logits:
+                o_steps_dense_map_logits.append(x[0])
+            for x in steps_decimal_start_logits:
+                o_steps_decimal_start_logits.append(x[0])
+            for i in range(len(l_steps_ignore_logits)):
+                if i == 0:
+                    loss = loss_cp(steps_ignore_logits[i], torch.tensor([l_steps_ignore_logits[i]], dtype=torch.long))
+                else:
+                    loss += loss_cp(steps_ignore_logits[i], torch.tensor([l_steps_ignore_logits[i]], dtype=torch.long))
+                loss += loss_cp(steps_tmp_moved_logits[i], torch.tensor([l_steps_tmp_moved_logits[i]], dtype=torch.long))
+                loss += loss_cp(steps_dense_op_logits[i], torch.tensor([l_steps_dense_op_logits[i]], dtype=torch.long))
+                loss += loss_cp(steps_dense_map_logits[i], torch.tensor([l_steps_dense_map_logits[i]], dtype=torch.long))
+                loss += loss_cp(steps_decimal_start_logits[i], torch.tensor([l_steps_decimal_start_logits[i]], dtype=torch.long))
+                # print('>> ', i, "steps_decimal_start_logits", steps_decimal_start_logits[i], "text", Text,"l_steps_decimal_start_logits", l_steps_decimal_start_logits[i])
+            loss_value = loss.item()
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)
@@ -138,15 +177,26 @@ def arth_val_one_epoch(
     ):
 
         with torch.no_grad():
-            trans_valid, trans_dense, trans_op = model(Text, start_pos = 0)
+            Text=Text.to(device)
+            labels=labels.to(device)
+            if args.step_mode == True:
+                trans_valid, trans_dense, trans_op, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = model(Text, start_pos = 0)
+            else:
+                trans_valid, trans_dense, trans_op = model(Text, start_pos = 0)
             label_valid = torch.zeros_like(trans_valid)
-            label_valid[: 0] = 1
+            label_valid[:, 1] = 1
             label_trans_op = torch.zeros_like(trans_op)
 
-            pred_dense = trans_dense[: 0]
+            pred_dense = trans_dense[:, 1]
             loss_mse = torch.nn.MSELoss()
             loss_cp = torch.nn.CrossEntropyLoss()
-            loss = loss_mse(pred_dense, labels) + 50 * loss_cp(trans_valid, label_valid) + 50 * loss_cp(trans_op, label_trans_op)
+            loss_bce = torch.nn.BCELoss()
+            loss_smooth_l1 = torch.nn.SmoothL1Loss(beta=0.01)
+            print("max(trans_valid)", torch.max(trans_valid, dim=1))
+            loss = 0.01 * loss_mse(pred_dense, labels) + 50 * loss_cp(trans_valid, label_valid) + 50 * loss_cp(trans_op, label_trans_op)
+            # loss = 50 * loss_mse(trans_valid, label_valid) + 50 * loss_cp(trans_op, label_trans_op)
+            print("pred_dense", pred_dense)
+            print("trans_dense", trans_dense)
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
@@ -165,12 +215,12 @@ def arth_val_one_epoch(
             This calibrates different curves when batch size changes.
             """
             epoch_1000x = int((data_iter_step / len(data_loader) + epoch) * 1000)
-            log_writer.add_scalar("c_train_loss", c_loss_value_reduce, epoch_1000x)
+            log_writer.add_scalar("eval, c_val_loss", c_loss_value_reduce, epoch_1000x)
             log_writer.add_scalar("lr", lr, epoch_1000x)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
+    print("Val Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 # class SimpleNumberDataset(Dataset):
@@ -210,7 +260,7 @@ def arth_val_one_epoch(
 #         return ts_1, ts_2
 
 class SimpleNumberDataset(Dataset):
-    def __init__(self, tokenizer_path, args: ArthModelArgs, max_words=128, record_size=100000, max_integer=100000, decimal_precise=0.000001, record_to_file_path='./snd.txt', partition="train"):
+    def __init__(self, tokenizer_path, args: ArthModelArgs, record_size=100000, max_integer=100000, decimal_precise=0.000001, record_to_file_path='./snd.txt', partition="train"):
         f1 = open(record_to_file_path, "r")
         self.lst_data = []
         for line in f1:
@@ -219,16 +269,17 @@ class SimpleNumberDataset(Dataset):
                 continue
             self.lst_data.append(line)
         f1.close()
+        train_index=int(len(self.lst_data) * 0.1)
         if partition == "train":
-            self.lst_data = self.lst_data[10000:]
+            self.lst_data = self.lst_data[train_index:]
         else:
-            self.lst_data = self.lst_data[:10000]
+            self.lst_data = self.lst_data[:train_index]
         self.record_size = record_size
         self.max_integer = max_integer
         self.decimal_precise = decimal_precise
         self.tokenizer = Tokenizer(model_path=tokenizer_path + "/tokenizer.model")
         self.dict_vocb_map = args.dict_vocb_map
-        self.max_words = max_words
+        self.max_words = args.max_seq_len
         self.ndtype = args.ndtype
         self.tdtype = args.tdtype
         self.device = args.device
@@ -254,10 +305,122 @@ class SimpleNumberDataset(Dataset):
             ts_1 = ts_1[: self.max_words]
         ts_2 = torch.tensor(number, dtype=self.tdtype)
         return ts_1, ts_2
-        
+
+# class SimpleNumberDatasetStepMode(Dataset):
+#     def __init__(self, tokenizer_path, args: ArthModelArgs, record_size=100000, max_integer=100000, decimal_precise=0.000001, record_to_file_path='./snd.txt', partition="train"):
+#         f1 = open(record_to_file_path, "r")
+#         self.lst_data = []
+#         for line in f1:
+#             line=line.strip()
+#             if line=="":
+#                 continue
+#             self.lst_data.append(line)
+#         f1.close()
+#         train_index=int(len(self.lst_data) * 0.1)
+#         if partition == "train":
+#             self.lst_data = self.lst_data[train_index:]
+#         else:
+#             self.lst_data = self.lst_data[:train_index]
+#         self.record_size = record_size
+#         self.max_integer = max_integer
+#         self.decimal_precise = decimal_precise
+#         self.tokenizer = Tokenizer(model_path=tokenizer_path + "/tokenizer.model")
+#         self.dict_vocb_map = args.dict_vocb_map
+#         self.max_words = args.max_seq_len
+#         self.ndtype = args.ndtype
+#         self.tdtype = args.tdtype
+#         self.device = args.device
     
+#     def __len__(self):
+#         return len(self.lst_data)
+
+#     def __getitem__(self, index):
+#         text = self.lst_data[index]
+#         number = float(text)
+#         list_tokens = self.tokenizer.encode(text, bos=True, eos=True)
+#         list_final = []
+#         for x in list_tokens:
+#             if x in self.dict_vocb_map:
+#                 list_final.append(self.dict_vocb_map[x])
+#             else:
+#                 list_final.append(20)
+#         ts_1 = torch.tensor(list_final, dtype=torch.int)
+#         padding = self.max_words - ts_1.shape[0]
+#         while len(list_final) < self.max_words:
+#             list_final.append(20)
+#         if padding > 0:
+#             ts_1 = torch.cat((ts_1, torch.ones(padding, dtype=torch.int) * 20))
+#         elif padding < 0:
+#             ts_1 = ts_1[: self.max_words]
+#             list_final = list_final[:self.max_words]
+#         ts_2 = torch.tensor(number, dtype=self.tdtype)
+#         return ts_1, ts_2
+        
+
+def gen_manual_aux_info(text : torch.Tensor, batch_index=1):
+    steps_ignore_logits=[]
+    steps_tmp_moved_logits=[]
+    steps_dense_op_logits=[]
+    steps_dense_map_logits=[]
+    steps_decimal_start_logits=[]
+    steps_op_pred=[]
+    fp_flag = 0
+    one_text = text[0, :]
+    for i in range(one_text.shape[0]):
+        xx=one_text[i]
+        if xx in range(21, 23):
+            steps_ignore_logits.append(1)
+            steps_tmp_moved_logits.append(0)
+            steps_dense_op_logits.append(0)
+            steps_dense_map_logits.append(0)
+            steps_decimal_start_logits.append(0)
+            steps_op_pred.append(0)
+        elif xx == 23:
+            fp_flag = 0
+            steps_ignore_logits.append(0)
+            steps_tmp_moved_logits.append(1)
+            steps_dense_op_logits.append(0)
+            steps_dense_map_logits.append(0)
+            steps_decimal_start_logits.append(0)
+            steps_op_pred.append(0)
+        elif xx in range(0, 10):
+            steps_ignore_logits.append(0)
+            steps_tmp_moved_logits.append(0)
+            if fp_flag == 1:
+                steps_dense_op_logits.append(3)
+            else:
+                steps_dense_op_logits.append(2)
+            steps_dense_map_logits.append(xx)
+            steps_decimal_start_logits.append(0)
+            steps_op_pred.append(0)
+        elif xx == 10:
+            fp_flag = 1
+            steps_ignore_logits.append(0)
+            steps_tmp_moved_logits.append(0)
+            steps_dense_op_logits.append(0)
+            steps_dense_map_logits.append(0)
+            steps_decimal_start_logits.append(1)
+            steps_op_pred.append(0)
+        elif xx in range(11, 15):
+            fp_flag = 0
+            steps_ignore_logits.append(0)
+            steps_tmp_moved_logits.append(2)
+            steps_dense_op_logits.append(0)
+            steps_dense_map_logits.append(0)
+            steps_decimal_start_logits.append(0)
+            steps_op_pred.append(xx - 9)
+        elif xx == 16:
+            fp_flag = 0
+            steps_ignore_logits.append(0)
+            steps_tmp_moved_logits.append(2)
+            steps_dense_op_logits.append(0)
+            steps_dense_map_logits.append(0)
+            steps_decimal_start_logits.append(0)
+            steps_op_pred.append(6)
+    return steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred
+
 def get_args_parser():
-    parser = argparse.ArgumentParser("MAE pre-training", add_help=False)
+    parser = argparse.ArgumentParser("ArthModel Training", add_help=False)
     parser.add_argument(
         "--batch_size",
         default=64,
@@ -323,6 +486,7 @@ def get_args_parser():
     parser.add_argument("--local_rank", default=-1, type=int)
     parser.add_argument("--dist_on_itp", action="store_true")
     parser.add_argument("--dist_url", default="env://", help="url used to set up distributed training")
+    parser.add_argument("--step_mode", default=False, type=bool, help="if use step mode training")
 
     return parser
 
@@ -349,6 +513,9 @@ def main(args):
     arth_args = ArthModelArgs()
     arth_args.device = args.device
     arth_args.max_batch_size = args.batch_size
+    arth_args.dim=16
+    arth_args.max_seq_len=16
+    arth_args.output_steps = args.step_mode
 
     dataset_train = SimpleNumberDataset(
         args.llama_model_path, arth_args, record_size=100000, max_integer=100000, decimal_precise=0.000001, partition='train'
