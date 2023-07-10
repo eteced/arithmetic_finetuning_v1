@@ -48,7 +48,7 @@ def get_args_parser():
 
     # Model parameters
     parser.add_argument("--llama_model_path", default="/home/eteced/dl_workspace/model_repo.folder/llama_ord/", type=str, help="path of llama model")
-    parser.add_argument("--checkpoint", default="./checkpoint/checkpoint-99.pth", type=str, help="path of llama model")
+    parser.add_argument("--checkpoint", default="./checkpoint/checkpoint-0.pth", type=str, help="path of llama model")
     return parser
 
 def arthmodel_load(args, args_for_model : ArthModelArgs, **kwargs):
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     args = get_args_parser()
     args = args.parse_args()
     default_arth_args = ArthModelArgs()
-    default_arth_args.max_batch_size = 1
+    default_arth_args.max_batch_size = 6
     default_arth_args.dim=16
     default_arth_args.max_seq_len=16
     default_arth_args.output_steps = True
@@ -78,12 +78,17 @@ if __name__ == "__main__":
     default_arth_args.device="cpu"
     model = arthmodel_load(args, default_arth_args)
     tokenizer = Tokenizer(model_path=args.llama_model_path + "/tokenizer.model")
-    text="1.111"
+    # text="13.45"
+    # text_list=["90.12", "1.234", "567.9"]
+    text_list=["434.128", "80.9612", "5.71342", "6.78147", "93.2142", "10000.2"]
     model.eval()
-    list_tokens=tokenizer.encode(text,bos=True,eos=True)
-    list_arth_tokens=transfer_token_ids(list_tokens, default_arth_args.dict_vocb_map)
-    print("list_arth_tokens", list_arth_tokens)
-    token_tensor = torch.tensor([list_arth_tokens], dtype=torch.int)
+    lst_tokens=[]
+    for x in text_list:
+        list_tokens=tokenizer.encode(x,bos=True,eos=True)
+        list_arth_tokens=transfer_token_ids(list_tokens, default_arth_args.dict_vocb_map)
+        lst_tokens.append(list_arth_tokens)
+    print("lst_tokens", lst_tokens)
+    token_tensor = torch.tensor(lst_tokens, dtype=torch.int)
     if default_arth_args.output_steps ==True:
         trans_valid, trans_dense, trans_op, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = model(token_tensor, start_pos = 0)
         print("trans_valid", trans_valid)

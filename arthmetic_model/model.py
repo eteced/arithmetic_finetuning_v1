@@ -182,6 +182,7 @@ class ArthTextToDenseBlock(nn.Module):
                 print("> ", i, " > dense_op_gate", dense_op_gate)
                 print("> ", i, " > dense_maps", dense_maps)
                 print("> ", i, " > decimal_start_gate", decimal_start_gate)
+                print("> ", i, " > 1: float_decimal_start", float_decimal_start)
             
             # if this token is an op, we would like to move next and set op_pred
             pos_tmp_gate = (torch.ones_like(ignore_gate) - ignore_gate) * op_set_and_move_gate
@@ -191,6 +192,8 @@ class ArthTextToDenseBlock(nn.Module):
             pos_tmp_gate = torch.tile(pos_tmp_gate, (1, self.dim))
             pos_handle_mask_update = torch.matmul(pos_handle_mask, self.next_mask) * pos_tmp_gate
             pos_handle_mask = pos_tmp_apply_gate * pos_handle_mask_update + (torch.ones_like(pos_tmp_apply_gate) - pos_tmp_apply_gate) * pos_handle_mask
+            if self.args.debug_trace == True:
+                print("> ", i, " > 1: pos_handle_mask", pos_handle_mask)
             # save to trans op
             tmp_trans_op_gate = (torch.ones_like(ignore_gate) - ignore_gate) * op_set_and_move_gate
             tmp_trans_op_gate = tmp_trans_op_gate.view(-1, 1)
@@ -225,16 +228,16 @@ class ArthTextToDenseBlock(nn.Module):
 
             if self.args.debug_trace == True:
                 print("> ", i, " > float_point_mem", float_point_mem)
-                print("> ", i, " > float_decimal_start", float_decimal_start)
+                print("> ", i, " > 2: float_decimal_start", float_decimal_start)
 
             # update dense
             tmp_dense_op_identical = torch.tile(((torch.ones_like(ignore_gate) - ignore_gate) * dense_op_gate[:, 1]).view(-1, 1), (1,self.dim)) * pos_handle_mask
             tmp_dense_op_add = torch.tile(((torch.ones_like(ignore_gate) - ignore_gate) * dense_op_gate[:, 2]).view(-1, 1), (1,self.dim)) * pos_handle_mask
             tmp_dense_op_decimal = torch.tile(((torch.ones_like(ignore_gate) - ignore_gate) * dense_op_gate[:, 3]).view(-1, 1), (1,self.dim)) * pos_handle_mask
             tmp_dense_no_change = torch.tile(((torch.ones_like(ignore_gate) - ignore_gate) * dense_op_gate[:, 0]).view(-1, 1), (1,self.dim)) * pos_handle_mask
-            new_value = tmp_dense_op_identical * torch.tile(torch.sum(dense_maps * self.fixed_map_tensor).view(-1, 1), (1, self.dim)) \
-                        + tmp_dense_op_add * (10 * trans_dense + torch.tile(torch.sum(dense_maps * self.fixed_map_tensor).view(-1, 1), (1, self.dim))) \
-                        + tmp_dense_op_decimal * (trans_dense + torch.tile(torch.sum(dense_maps * self.fixed_map_tensor).view(-1, 1), (1, self.dim)) * torch.tile(float_point_mem.view(-1, 1), (1,self.dim))) \
+            new_value = tmp_dense_op_identical * torch.tile(torch.sum(dense_maps * self.fixed_map_tensor, dim=-1).view(-1, 1), (1, self.dim)) \
+                        + tmp_dense_op_add * (10 * trans_dense + torch.tile(torch.sum(dense_maps * self.fixed_map_tensor, dim=-1).view(-1, 1), (1, self.dim))) \
+                        + tmp_dense_op_decimal * (trans_dense + torch.tile(torch.sum(dense_maps * self.fixed_map_tensor, dim=-1).view(-1, 1), (1, self.dim)) * torch.tile(float_point_mem.view(-1, 1), (1,self.dim))) \
                         + tmp_dense_no_change * trans_dense + torch.tile(ignore_gate.view(-1, 1), (1, self.dim)) * trans_dense
             trans_dense = pos_handle_mask * new_value + (torch.ones_like(pos_handle_mask) - pos_handle_mask) * trans_dense
 
@@ -256,6 +259,8 @@ class ArthTextToDenseBlock(nn.Module):
             pos_tmp_gate = torch.tile(pos_tmp_gate, (1, self.dim))
             pos_handle_mask_update = torch.matmul(pos_handle_mask, self.next_mask) * pos_tmp_gate
             pos_handle_mask = pos_tmp_apply_gate * pos_handle_mask_update + (torch.ones_like(pos_tmp_apply_gate) - pos_tmp_apply_gate) * pos_handle_mask
+            if self.args.debug_trace == True:
+                print("> ", i, " > 2: pos_handle_mask", pos_handle_mask)
 
             # reset again to ensure no history value when reset
             # update float point mem, when move to next, the float_point_mem is reset to one, when dense_op_gate[:, 3] == 1, float_point_mem = float_point_mem * 0.1

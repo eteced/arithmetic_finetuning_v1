@@ -89,33 +89,39 @@ def arth_train_one_epoch(
             # print("trans_op", trans_op[:, 0])
             loss_value = loss.item()
         else:
-            l_steps_ignore_logits, l_steps_tmp_moved_logits, l_steps_dense_op_logits, l_steps_dense_map_logits, l_steps_decimal_start_logits, l_steps_op_pred = gen_manual_aux_info(Text, 0)
-            o_steps_ignore_logits=[]
-            o_steps_tmp_moved_logits=[]
-            o_steps_dense_op_logits=[]
-            o_steps_dense_map_logits=[]
-            o_steps_decimal_start_logits=[]
-            loss_cp = torch.nn.CrossEntropyLoss()
-            for x in steps_ignore_logits:
-                o_steps_ignore_logits.append(x[0])
-            for x in steps_tmp_moved_logits:
-                o_steps_tmp_moved_logits.append(x[0])
-            for x in steps_dense_op_logits:
-                o_steps_dense_op_logits.append(x[0])
-            for x in steps_dense_map_logits:
-                o_steps_dense_map_logits.append(x[0])
-            for x in steps_decimal_start_logits:
-                o_steps_decimal_start_logits.append(x[0])
-            for i in range(len(l_steps_ignore_logits)):
-                if i == 0:
-                    loss = loss_cp(steps_ignore_logits[i], torch.tensor([l_steps_ignore_logits[i]], dtype=torch.long))
-                else:
-                    loss += loss_cp(steps_ignore_logits[i], torch.tensor([l_steps_ignore_logits[i]], dtype=torch.long))
-                loss += loss_cp(steps_tmp_moved_logits[i], torch.tensor([l_steps_tmp_moved_logits[i]], dtype=torch.long))
-                loss += loss_cp(steps_dense_op_logits[i], torch.tensor([l_steps_dense_op_logits[i]], dtype=torch.long))
-                loss += loss_cp(steps_dense_map_logits[i], torch.tensor([l_steps_dense_map_logits[i]], dtype=torch.long))
-                loss += loss_cp(steps_decimal_start_logits[i], torch.tensor([l_steps_decimal_start_logits[i]], dtype=torch.long))
-                # print('>> ', i, "steps_decimal_start_logits", steps_decimal_start_logits[i], "text", Text,"l_steps_decimal_start_logits", l_steps_decimal_start_logits[i])
+            loss = None
+            for tt in range(Text.shape[0]):
+                l_steps_ignore_logits, l_steps_tmp_moved_logits, l_steps_dense_op_logits, l_steps_dense_map_logits, l_steps_decimal_start_logits, l_steps_op_pred = gen_manual_aux_info(Text, tt)
+                o_steps_ignore_logits=[]
+                o_steps_tmp_moved_logits=[]
+                o_steps_dense_op_logits=[]
+                o_steps_dense_map_logits=[]
+                o_steps_decimal_start_logits=[]
+                o_steps_op_pred=[]
+                loss_cp = torch.nn.CrossEntropyLoss()
+                for x in steps_ignore_logits:
+                    o_steps_ignore_logits.append(x[tt])
+                for x in steps_tmp_moved_logits:
+                    o_steps_tmp_moved_logits.append(x[tt])
+                for x in steps_dense_op_logits:
+                    o_steps_dense_op_logits.append(x[tt])
+                for x in steps_dense_map_logits:
+                    o_steps_dense_map_logits.append(x[tt])
+                for x in steps_decimal_start_logits:
+                    o_steps_decimal_start_logits.append(x[tt])
+                for x in steps_op_pred:
+                    o_steps_op_pred.append(x[tt])
+                for i in range(len(l_steps_ignore_logits)):
+                    if loss is None:
+                        loss = loss_cp(o_steps_ignore_logits[i], torch.tensor(l_steps_ignore_logits[i], dtype=torch.long))
+                    else:
+                        loss += loss_cp(o_steps_ignore_logits[i], torch.tensor(l_steps_ignore_logits[i], dtype=torch.long))
+                    loss += loss_cp(o_steps_tmp_moved_logits[i], torch.tensor(l_steps_tmp_moved_logits[i], dtype=torch.long))
+                    loss += loss_cp(o_steps_dense_op_logits[i], torch.tensor(l_steps_dense_op_logits[i], dtype=torch.long))
+                    loss += loss_cp(o_steps_dense_map_logits[i], torch.tensor(l_steps_dense_map_logits[i], dtype=torch.long))
+                    loss += loss_cp(o_steps_decimal_start_logits[i], torch.tensor(l_steps_decimal_start_logits[i], dtype=torch.long))
+                    loss += loss_cp(o_steps_op_pred[i], torch.tensor(l_steps_op_pred[i], dtype=torch.long))
+                    # print('>> ', i, "steps_decimal_start_logits", steps_decimal_start_logits[i], "text", Text,"l_steps_decimal_start_logits", l_steps_decimal_start_logits[i])
             loss_value = loss.item()
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
@@ -193,7 +199,7 @@ def arth_val_one_epoch(
             loss_bce = torch.nn.BCELoss()
             loss_smooth_l1 = torch.nn.SmoothL1Loss(beta=0.01)
             print("max(trans_valid)", torch.max(trans_valid, dim=1))
-            loss = 0.01 * loss_mse(pred_dense, labels) + 50 * loss_cp(trans_valid, label_valid) + 50 * loss_cp(trans_op, label_trans_op)
+            loss = 0.01 * loss_smooth_l1(pred_dense, labels) + 50 * loss_cp(trans_valid, label_valid) + 50 * loss_cp(trans_op, label_trans_op)
             # loss = 50 * loss_mse(trans_valid, label_valid) + 50 * loss_cp(trans_op, label_trans_op)
             print("pred_dense", pred_dense)
             print("trans_dense", trans_dense)
@@ -270,6 +276,7 @@ class SimpleNumberDataset(Dataset):
             self.lst_data.append(line)
         f1.close()
         train_index=int(len(self.lst_data) * 0.1)
+        print("train_index", train_index)
         if partition == "train":
             self.lst_data = self.lst_data[train_index:]
         else:
@@ -487,6 +494,7 @@ def get_args_parser():
     parser.add_argument("--dist_on_itp", action="store_true")
     parser.add_argument("--dist_url", default="env://", help="url used to set up distributed training")
     parser.add_argument("--step_mode", default=False, type=bool, help="if use step mode training")
+    parser.add_argument("--eval", default=False, type=bool, help="clear optimizer")
 
     return parser
 
