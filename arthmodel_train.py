@@ -51,6 +51,7 @@ def arth_train_one_epoch(
     metric_logger.add_meter("lr", misc.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
     print_freq = 10
+    arth_tau = 0.1
 
     accum_iter = args.accum_iter
 
@@ -113,19 +114,21 @@ def arth_train_one_epoch(
                     o_steps_op_pred.append(x[tt])
                 for i in range(len(l_steps_ignore_logits)):
                     if loss is None:
-                        loss = loss_cp(o_steps_ignore_logits[i], torch.tensor(l_steps_ignore_logits[i], dtype=torch.long))
+                        loss = loss_cp(o_steps_ignore_logits[i] / arth_tau, torch.tensor(l_steps_ignore_logits[i], dtype=torch.long))
                     else:
-                        loss += loss_cp(o_steps_ignore_logits[i], torch.tensor(l_steps_ignore_logits[i], dtype=torch.long))
-                    loss += loss_cp(o_steps_tmp_moved_logits[i], torch.tensor(l_steps_tmp_moved_logits[i], dtype=torch.long))
-                    loss += loss_cp(o_steps_dense_op_logits[i], torch.tensor(l_steps_dense_op_logits[i], dtype=torch.long))
-                    loss += loss_cp(o_steps_dense_map_logits[i], torch.tensor(l_steps_dense_map_logits[i], dtype=torch.long))
-                    loss += loss_cp(o_steps_decimal_start_logits[i], torch.tensor(l_steps_decimal_start_logits[i], dtype=torch.long))
-                    loss += loss_cp(o_steps_op_pred[i], torch.tensor(l_steps_op_pred[i], dtype=torch.long))
+                        loss += loss_cp(o_steps_ignore_logits[i] / arth_tau, torch.tensor(l_steps_ignore_logits[i], dtype=torch.long))
+                    loss += loss_cp(o_steps_tmp_moved_logits[i] / arth_tau, torch.tensor(l_steps_tmp_moved_logits[i], dtype=torch.long))
+                    loss += loss_cp(o_steps_dense_op_logits[i] / arth_tau, torch.tensor(l_steps_dense_op_logits[i], dtype=torch.long))
+                    loss += loss_cp(o_steps_dense_map_logits[i] / arth_tau, torch.tensor(l_steps_dense_map_logits[i], dtype=torch.long))
+                    loss += loss_cp(o_steps_decimal_start_logits[i] / arth_tau, torch.tensor(l_steps_decimal_start_logits[i], dtype=torch.long))
+                    loss += loss_cp(o_steps_op_pred[i] / arth_tau, torch.tensor(l_steps_op_pred[i], dtype=torch.long))
                     # print('>> ', i, "steps_decimal_start_logits", steps_decimal_start_logits[i], "text", Text,"l_steps_decimal_start_logits", l_steps_decimal_start_logits[i])
+                    # print('>> ', i, "o_steps_op_pred[i]", o_steps_op_pred[i], "l_steps_op_pred[i]", l_steps_op_pred)
             loss_value = loss.item()
         if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-            sys.exit(1)
+            print("[Warning]: Loss is {}, in training, please check!!!! skip the batch".format(loss_value), " text: ", Text)
+            continue
+            # sys.exit(1)
         
         metric_logger.update(closs=loss_value)
         loss /= accum_iter
@@ -206,8 +209,8 @@ def arth_val_one_epoch(
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-            sys.exit(1)
+            print("[Warning]: Loss is {}, in validation, please check!!!!".format(loss_value), " text: ", Text)
+            # sys.exit(1)
 
         metric_logger.update(closs=loss_value)
 
@@ -296,7 +299,11 @@ class SimpleNumberDataset(Dataset):
 
     def __getitem__(self, index):
         text = self.lst_data[index]
-        number = float(text)
+        # if we use step_mode, ts_2 is not necessary
+        try:
+            number = float(text)
+        except:
+            number = 1
         list_tokens = self.tokenizer.encode(text, bos=True, eos=True)
         list_final = []
         for x in list_tokens:
@@ -521,9 +528,8 @@ def main(args):
     arth_args = ArthModelArgs()
     arth_args.device = args.device
     arth_args.max_batch_size = args.batch_size
-    arth_args.dim=16
-    arth_args.max_seq_len=16
     arth_args.output_steps = args.step_mode
+    arth_args.arth_tau = 0.1
 
     dataset_train = SimpleNumberDataset(
         args.llama_model_path, arth_args, record_size=100000, max_integer=100000, decimal_precise=0.000001, partition='train'
@@ -622,7 +628,8 @@ def main(args):
             model, data_loader_val, optimizer, device, epoch, loss_scaler, log_writer=log_writer, args=args
         )
 
-        if args.output_dir and (epoch % 8 == 0 or epoch + 1 == args.epochs):
+        # if args.output_dir and (epoch % 8 == 0 or epoch + 1 == args.epochs):
+        if args.output_dir:
             misc.save_model(
                 args=args,
                 model=model,

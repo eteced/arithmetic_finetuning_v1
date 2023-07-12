@@ -33,9 +33,55 @@ from typing import Iterable
 import util.lr_sched as lr_sched
 import util.misc as misc
 import math
-from arthmetic_model.model import ArthModelArgs, Arth_Model
-from arthmodel_train import SimpleNumberDataset
+from arthmetic_model.model import ArthModelArgs, Arth_Model, ArthCalcModule
+from arthmodel_train import SimpleNumberDataset, gen_manual_aux_info
 
+def gen_legal_output_for_arthcalc(texts: list, max_len=128):
+    op_safe=['+' , '-' , "*", '/', '^']
+    l_out_trans_valid=[]
+    l_out_trans_dense=[]
+    l_out_trans_op_pred=[]
+    for x_str in texts:
+        arr = x_str.split(" ")
+        list_op_pred=[]
+        list_trans_valid=[]
+        list_trans_dense=[]
+        for arr_x in arr:
+            arr_x = arr_x.strip()
+            list_op=[-100, -100, -100, -100, -100, -100, -100]
+            if arr_x == "":
+                continue
+            elif arr_x in op_safe:
+                index = op_safe.index(arr_x)
+                list_op[index + 2] = 100
+                list_trans_valid.append(1)
+                list_trans_dense.append(0.0)
+                list_op_pred.append(list_op)
+            else:
+                try:
+                    dense=float(arr_x)
+                    list_op[0] = 100
+                    list_trans_valid.append(1)
+                    list_trans_dense.append(dense)
+                    list_op_pred.append(list_op)
+                except:
+                    continue
+        if len(list_trans_valid) > max_len:
+            list_op_pred=list_op_pred[:max_len, :]
+            list_trans_valid=list_trans_valid[:max_len]
+            list_trans_dense=list_trans_dense[:max_len]
+        while len(list_op_pred) < max_len:
+            list_op=[100, -100, -100, -100, -100, -100, -100]
+            list_op_pred.append(list_op)
+            list_trans_valid.append(0)
+            list_trans_dense.append(0)
+        l_out_trans_valid.append(torch.tensor(list_trans_valid, dtype=torch.float32))
+        l_out_trans_dense.append(torch.tensor(list_trans_dense, dtype=torch.float64))
+        l_out_trans_op_pred.append(torch.tensor(list_op_pred, dtype=torch.float32))
+    trans_valid = torch.stack(l_out_trans_valid)
+    trans_dense = torch.stack(l_out_trans_dense)
+    trans_op_pred = torch.stack(l_out_trans_op_pred)
+    return trans_valid, trans_dense, trans_op_pred
 
 def get_args_parser():
     parser = argparse.ArgumentParser("ArthModel Inference", add_help=False)
@@ -48,7 +94,7 @@ def get_args_parser():
 
     # Model parameters
     parser.add_argument("--llama_model_path", default="/home/eteced/dl_workspace/model_repo.folder/llama_ord/", type=str, help="path of llama model")
-    parser.add_argument("--checkpoint", default="./checkpoint/checkpoint-0.pth", type=str, help="path of llama model")
+    parser.add_argument("--checkpoint", default="./checkpoint/checkpoint-2.pth", type=str, help="path of llama model")
     return parser
 
 def arthmodel_load(args, args_for_model : ArthModelArgs, **kwargs):
@@ -66,13 +112,11 @@ def transfer_token_ids(list_tokens : list, dict_vocb_map : dict):
             list_final.append(20)
     return list_final
 
-if __name__ == "__main__":
-    args = get_args_parser()
-    args = args.parse_args()
+def test_arth_to_dense(args):
     default_arth_args = ArthModelArgs()
-    default_arth_args.max_batch_size = 6
-    default_arth_args.dim=16
-    default_arth_args.max_seq_len=16
+    default_arth_args.max_batch_size = 1
+    default_arth_args.dim=128
+    default_arth_args.max_seq_len=128
     default_arth_args.output_steps = True
     default_arth_args.debug_trace = True
     default_arth_args.device="cpu"
@@ -80,7 +124,7 @@ if __name__ == "__main__":
     tokenizer = Tokenizer(model_path=args.llama_model_path + "/tokenizer.model")
     # text="13.45"
     # text_list=["90.12", "1.234", "567.9"]
-    text_list=["434.128", "80.9612", "5.71342", "6.78147", "93.2142", "10000.2"]
+    text_list=["32716.022586 * 48959.059241 71809.071167 41330.026497 ^ 62365.021137 ^ * 27002.081354 + 88707.069639 / ^ 65903.013672"]
     model.eval()
     lst_tokens=[]
     for x in text_list:
@@ -89,6 +133,8 @@ if __name__ == "__main__":
         lst_tokens.append(list_arth_tokens)
     print("lst_tokens", lst_tokens)
     token_tensor = torch.tensor(lst_tokens, dtype=torch.int)
+    aux_lal_steps_ignore_logits, l_steps_tmp_moved_logits, l_steps_dense_op_logits, l_steps_dense_map_logits, l_steps_decimal_start_logits, l_steps_op_pred = gen_manual_aux_info(token_tensor, 0)
+    print("l_steps_op_pred", l_steps_op_pred)
     if default_arth_args.output_steps ==True:
         trans_valid, trans_dense, trans_op, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = model(token_tensor, start_pos = 0)
         print("trans_valid", trans_valid)
@@ -104,3 +150,29 @@ if __name__ == "__main__":
         print("trans_valid", trans_valid)
         print("trans_dense", trans_dense)
         print("trans_op", trans_op)
+
+def test_arth_calc(args):
+    default_arth_args = ArthModelArgs()
+    default_arth_args.max_batch_size = 1
+    default_arth_args.dim=8
+    default_arth_args.max_seq_len=8
+    default_arth_args.output_steps = True
+    default_arth_args.debug_trace = True
+    default_arth_args.device="cpu"
+    default_arth_args.tdtype = torch.float64
+    default_arth_args.ndtype = torch.float32
+    arth_calc_model = ArthCalcModule(default_arth_args)
+    text="3 5 +"
+    trans_valid, trans_dense, trans_op_pred = gen_legal_output_for_arthcalc([text], default_arth_args.max_seq_len)
+    trans_valid, trans_dense, trans_op_pred, if_finished,  if_valid= arth_calc_model.forward(trans_valid, trans_dense, trans_op_pred)
+    print("trans_valid", trans_valid)
+    print("trans_dense", trans_dense)
+    print("trans_op_pred", trans_op_pred)
+    print("if_finished", if_finished)
+    print("if_valid", if_valid)
+
+if __name__ == "__main__":
+    args = get_args_parser()
+    args = args.parse_args()
+    # test_arth_to_dense(args)
+    test_arth_calc(args)

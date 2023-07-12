@@ -33,7 +33,7 @@ class ArthModelArgs:
     calc_n_heads: int = 1
     vocab_size: int = 25  # 0 1 2 3 4 5 6 7 8 9 . + - * / e ^ ( ) [BOS]{21} [EOS]{22} [SEP/space]{23}
     norm_eps: float = 1e-5
-    arth_tau: float = 0.2
+    arth_tau: float = 0.1
 
     max_batch_size: int = 32
     max_seq_len: int = 128
@@ -64,6 +64,7 @@ class ArthTextToDenseBlock(nn.Module):
         self.create_fixed_values(args.tdtype, args.llm_emb_dtype)
         self.create_math_nn_s(args.ndtype)
         self.args = args
+        self.norm_eps = args.norm_eps
 
 
     def create_fixed_values(self, tdype, llm_emb_dtype):
@@ -89,50 +90,74 @@ class ArthTextToDenseBlock(nn.Module):
         # token valid nn or skip nn, skip that token without any changes
         self.token_valid_nn = nn.Sequential(
             nn.Linear(self.dim, self.dim),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim, self.dim // 2),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim // 2, 2),
         )
         # if move to next or not, 0 remain, 1 move to next, 2 move to next, sets op, and move to next again
         self.moved_nn = nn.Sequential(
             nn.Linear(self.dim, self.dim),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim, self.dim // 2),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim // 2, 3),
         )
         # the operator predict, here we directly move the predict result to final
         self.op_nn = nn.Sequential(
             nn.Linear(self.dim, self.dim),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim, self.dim // 2),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim // 2, 7),
         )
         # if decimal start
         self.decimal_start_nn = nn.Sequential(
             nn.Linear(self.dim, self.dim),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim, self.dim // 2),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim // 2, 2),
         )
         # dense handle, three op, trans_dense directly add pred_num, trans_dense * 10 and add pred_num, float_now * 0.1 and trans_dense + float_now * pred_num
         self.dense_op_nn = nn.Sequential(
             nn.Linear(self.dim + 1, self.dim),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim, self.dim // 2),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim // 2, 4),
         )
 
         # dense pred, 0~9, because there are many gates, here we directly predict 0~9 without extra invalid flag
         self.dense_pred_nn =  nn.Sequential(
             nn.Linear(self.dim, self.dim),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
+            nn.Linear(self.dim, self.dim),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim, self.dim // 2),
-            nn.SiLU(),
+            nn.PReLU(init=0.1),
             nn.Linear(self.dim // 2, 10),
         )
 
@@ -159,19 +184,26 @@ class ArthTextToDenseBlock(nn.Module):
         for i in range(start_pos, x.shape[1]):
             token_vec = x[:,i,:] # B x dim
             ignore_logits = self.token_valid_nn(token_vec)
+            # normalize significantly prevent the simple training from coveraged, thus I hold the normalize operator
+            # ignore_logits = torch.nn.functional.normalize(ignore_logits, p=2, dim=-1, eps=self.norm_eps)
             ignore_gate = F.gumbel_softmax(ignore_logits, tau=self.arth_tau, hard=True)[:, 1] # B
             move_logits = self.moved_nn(token_vec)
+            # move_logits = torch.nn.functional.normalize(move_logits, p=2, dim=-1, eps=self.norm_eps)
             tmp_moved_gate = F.gumbel_softmax(move_logits, tau=self.arth_tau, hard=True) # B x 3
             move_next_gate = torch.max(tmp_moved_gate[:, 1:], dim=1).values  # B
             op_set_and_move_gate = tmp_moved_gate[:, 2] # B
             remain_gate = tmp_moved_gate[:, 0] # B
             float_decimal_start_flag = float_decimal_start.view(-1, 1)
             dense_op_logits = self.dense_op_nn(torch.cat((token_vec, float_decimal_start_flag), dim=-1))
+            # dense_op_logits = torch.nn.functional.normalize(dense_op_logits, p=2, dim=-1, eps=self.norm_eps)
             dense_op_gate = F.gumbel_softmax(dense_op_logits, tau=self.arth_tau, hard=True) # B x 4
             dense_map_logits = self.dense_pred_nn(token_vec)
+            # dense_map_logits = torch.nn.functional.normalize(dense_map_logits, p=2, dim=-1, eps=self.norm_eps)
             dense_maps = F.gumbel_softmax(dense_map_logits, tau=self.arth_tau, hard=True) # B x 10
             op_pred = self.op_nn(token_vec) # B x op_dims
+            # op_pred = torch.nn.functional.normalize(op_pred, p=2, dim=-1, eps=self.norm_eps)
             decimal_start_logits = self.decimal_start_nn(token_vec)
+            # decimal_start_logits = torch.nn.functional.normalize(decimal_start_logits, p=2, dim=-1, eps=self.norm_eps)
             decimal_start_gate = F.gumbel_softmax(decimal_start_logits, tau=self.arth_tau, hard=True)[:, 1]
 
             if self.args.debug_trace == True:
@@ -210,14 +242,7 @@ class ArthTextToDenseBlock(nn.Module):
             if self.args.debug_trace == True:
                 print("> ", i, " > 1: float_point_mem_update", float_point_mem_update)
                 print("> ", i, " > float_point_mem", float_point_mem)
-            float_point_mem_update = dense_op_gate[:, 0] * float_point_mem + (torch.ones_like(dense_op_gate[:, 0]) - dense_op_gate[:, 0]) * float_point_mem_update
-            if self.args.debug_trace == True:
-                print("> ", i, " > 2: float_point_mem_update", float_point_mem_update)
-                print("> ", i, " > float_point_mem", float_point_mem)
             float_point_mem = ignore_gate * float_point_mem + (torch.ones_like(ignore_gate) - ignore_gate) * float_point_mem_update
-            if self.args.debug_trace == True:
-                print("> ", i, " > 3: float_point_mem_update", float_point_mem_update)
-                print("> ", i, " > float_point_mem", float_point_mem)
             # also reset
             float_decimal_start_update = torch.zeros_like(float_decimal_start) * (move_next_gate) + (torch.ones_like(move_next_gate) - move_next_gate) * float_decimal_start
             float_decimal_start = ignore_gate * float_decimal_start_update + (torch.ones_like(ignore_gate) - ignore_gate) * float_decimal_start_update
@@ -273,6 +298,9 @@ class ArthTextToDenseBlock(nn.Module):
             float_decimal_start_update = torch.zeros_like(float_decimal_start) * (move_next_gate) + (torch.ones_like(move_next_gate) - move_next_gate) * float_decimal_start_update
             float_decimal_start = ignore_gate * float_decimal_start_update + (torch.ones_like(ignore_gate) - ignore_gate) * float_decimal_start_update
 
+            if self.args.debug_trace == True:
+                print("> ", i, " > op_pred", op_pred)
+
             if (self.output_steps):
                 steps_ignore_logits.append(ignore_logits)
                 steps_tmp_moved_logits.append(move_logits)
@@ -284,6 +312,146 @@ class ArthTextToDenseBlock(nn.Module):
             return trans_valid, trans_dense, trans_op, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred
         else:
             return trans_valid, trans_dense, trans_op
+
+class ArthDenseCalcToDenseBlock(nn.Module):
+    def __init__(self, params: ArthModelArgs):
+        super().__init__()
+        self.args = params
+        self.device = params.device
+        self.arth_tau = params.arth_tau
+        self.create_fixed_values()
+
+    def create_fixed_values(self):
+        self.hold_numbers = torch.zeros(self.args.max_batch_size, 2, dtype=self.args.tdtype)
+        self.hold_status = torch.zeros(self.args.max_batch_size, 2, dtype=self.args.ndtype)
+        self.hold_index = torch.zeros(self.args.max_batch_size, 2, dtype=torch.long)
+        self.meet_op = torch.zeros(self.args.max_batch_size, dtype=self.args.ndtype)
+        self.next_mask = torch.zeros(2, 2, dtype=self.args.ndtype, device=self.device) # 2 x 2
+        self.next_mask[0, 1] = 1
+        self.next_mask_long = torch.zeros(2, 2, dtype=torch.long, device=self.device) # 2 x 2
+        self.next_mask_long[0, 1] = 1
+    
+    def forward(self, trans_valid : torch.Tensor, trans_dense : torch.Tensor, trans_op : torch.Tensor, if_finished : torch.Tensor, if_valid: torch.Tensor, start_pos = 0):
+        # if_finished size = B, if_valid size = B, should be ether zeros or ones.
+        hold_numbers = self.hold_numbers.clone().detach().requires_grad_(True).to(self.device) # B x dim(T)
+        hold_status = self.hold_status.clone().detach().requires_grad_(True).to(self.device) # B x 2
+        hold_index = self.hold_index.clone().detach().requires_grad_(False).to(self.device) # B x 2
+        meet_op = torch.zeros(self.args.max_batch_size, dtype=self.args.ndtype)
+
+        for i in range(start_pos, trans_valid.shape[1]):
+            i_trans_valid = trans_valid[:, i] * (torch.ones_like(meet_op) - meet_op) * (torch.ones_like(if_finished) - if_finished)
+            i_trans_dense = trans_dense[:, i]
+            i_trans_op = trans_op[:, i, :]
+            i_op_which = F.gumbel_softmax(i_trans_op, tau=self.arth_tau, hard=True) # B x op_dims
+            not_op_gate = i_op_which[:, 0]
+
+            # save denses
+            dense_gate = not_op_gate * i_trans_valid
+            dense_applied_gate = if_valid * dense_gate
+            dense_applied = dense_applied_gate.view(-1, 1)
+            dense_applied = torch.tile(dense_applied, (1, 2))
+            hold_numbers = dense_applied.to(self.args.tdtype) *  torch.matmul(hold_numbers, self.next_mask.to(self.args.tdtype)) + (torch.ones_like(dense_applied.to(self.args.tdtype)) - dense_applied.to(self.args.tdtype)) * hold_numbers
+            hold_status = dense_applied *  torch.matmul(hold_status, self.next_mask) + (torch.ones_like(dense_applied) - dense_applied) * hold_status
+            hold_index = dense_applied.long() *  torch.matmul(hold_index, self.next_mask_long) + (torch.ones_like(dense_applied.long()) - dense_applied.long()) * hold_index
+            
+            print("> ", i, "> not_op_gate", not_op_gate)
+            print("> ", i, "> dense_applied_gate", dense_applied_gate)
+            print("> ", i, "> hold_numbers", hold_numbers)
+            print("> ", i, "> hold_status", hold_status)
+            print("> ", i, "> hold_index", hold_index)
+
+            hold_index[:, 0] = hold_index[:, 0] * (torch.ones_like(dense_applied_gate.long()) - dense_applied_gate.long()) + dense_applied_gate.long() * i
+            hold_status[:, 0] = hold_status[:, 0] * (torch.ones_like(dense_applied_gate) - dense_applied_gate) + torch.ones_like(dense_applied_gate) * dense_applied_gate
+            hold_numbers[:, 0] = hold_numbers[:, 0] * (torch.ones_like(dense_applied_gate) - dense_applied_gate) + torch.ones_like(dense_applied_gate) * dense_applied_gate * i_trans_dense
+
+            print("> ", i, "> 2 hold_numbers", hold_numbers)
+            print("> ", i, "> 2 hold_status", hold_status)
+            print("> ", i, "> 2 hold_index", hold_index)
+
+            # handle ops
+            op_gate = (torch.ones_like(not_op_gate) - not_op_gate) * i_trans_valid * if_valid
+            print("> ", i, "> op_gate", op_gate)
+            meet_op = torch.ones_like(op_gate) * op_gate * (torch.ones_like(meet_op) - meet_op) + meet_op
+            print("> ", i, "> meet_op", meet_op)
+            if_valid = op_gate * hold_status[:, 0] * hold_status[:, 1] + (torch.ones_like(op_gate) - op_gate) * if_valid
+            dense_add = hold_numbers[:, 1] + hold_numbers[:, 0]
+            dense_minus = hold_numbers[:, 1] - hold_numbers[:, 0]
+            dense_mul = hold_numbers[:, 1] * hold_numbers[:, 0]
+            dense_div = hold_numbers[:, 1] / (hold_numbers[:, 0] + 0.0000001)
+            dense_pow = torch.pow(hold_numbers[:, 1], hold_numbers[:, 0])
+            dense_zero = torch.zeros_like(hold_numbers[:, 0])
+            dense_one = torch.zeros_like(hold_numbers[:, 0])
+            dense_ops = torch.stack([dense_zero, dense_one, dense_add, dense_minus, dense_mul, dense_div, dense_pow], dim=-1)
+            dense_calc = torch.sum(dense_ops * i_op_which, dim=-1)
+            ## with if_valid update, we put the dense calc result to the place of second number and set the place of first number invalid
+            final_op_gate = (torch.ones_like(not_op_gate) - not_op_gate) * i_trans_valid * if_valid
+            one_hot_number2 = F.one_hot(hold_index[:, 0], num_classes = self.args.max_seq_len).float()
+            one_hot_number1 = F.one_hot(hold_index[:, 1], num_classes = self.args.max_seq_len).float()
+            final_op_gate_tile = torch.tile(final_op_gate.view(-1, 1), (1, self.args.max_seq_len))
+            
+            trans_valid = trans_valid * (torch.ones_like(final_op_gate_tile) - final_op_gate_tile) + trans_valid * final_op_gate_tile * (torch.ones_like(one_hot_number1) - one_hot_number1)
+            dense_calc_tile = torch.tile(dense_calc.view(-1, 1), (1, self.args.max_seq_len))
+            trans_dense = trans_dense * (torch.ones_like(final_op_gate_tile) - final_op_gate_tile) + trans_dense * final_op_gate_tile * (torch.ones_like(one_hot_number2) - one_hot_number2) + \
+                          dense_calc_tile * final_op_gate_tile * one_hot_number2
+            print("> ", i, "> trans_valid", trans_valid)
+            trans_valid[:, i] = trans_valid[:, i] * (torch.ones_like(final_op_gate) - final_op_gate)
+            print("> ", i, "> 2 trans_valid", trans_valid)
+            # reset hold_status[:, 0]
+            hold_status[:, 0] = hold_status[:, 0] * (torch.ones_like(final_op_gate) - final_op_gate)
+
+        if_finished_update = if_valid * (torch.ones_like(meet_op) - meet_op) * (hold_status[:, 0]) * (torch.ones_like(hold_status[:, 0]) - hold_status[:, 1])
+        if_finished = (torch.ones_like(if_finished) - if_finished) * if_finished_update + if_finished
+        return trans_valid, trans_dense, trans_op, if_finished, if_valid
+
+class ArthCalcModule(nn.Module):
+    def __init__(self, params: ArthModelArgs):
+        super().__init__()
+        self.params = params
+        self.vocab_size = params.vocab_size
+
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size, params.dim, device=params.device)
+
+        self.output_steps = params.output_steps
+        self.max_batch_size = params.max_batch_size
+        self.max_seq_len = params.max_seq_len
+        self.acc_blocks = []
+        self.init_acc_block()
+    
+    def init_acc_block(self):
+        for i in range(0, 4):
+            self.acc_blocks.append(ArthDenseCalcToDenseBlock(self.params))
+    
+    def forward(self, trans_valid: torch.Tensor, trans_dense: torch.Tensor, trans_op: torch.Tensor, start_pos = 0):
+        if_finished = torch.zeros(self.max_batch_size)
+        if_valid = torch.ones(self.max_batch_size)
+        i = 0
+        for layer in self.acc_blocks:
+            print("----------------- ", i, " -----------------")
+            i=i+1
+            trans_valid, trans_dense, trans_op, if_finished, if_valid = layer(trans_valid, trans_dense, trans_op, if_finished, if_valid, start_pos)
+        return trans_valid, trans_dense, trans_op, if_finished, if_valid            
+
+class ArthDenseToTextEmbeddingModule(nn.Module):
+    def __init__(self, params: ArthModelArgs):
+        super().__init__()
+        self.params = params
+        self.vocab_size = params.vocab_size
+
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size, params.dim, device=params.device)
+    
+    def init_fixed_values(self):
+        self.next_mask = torch.zeros(self.params.max_seq_len, self.max_seq_len, dtype=torch.long, device=self.device) # dim(T) x dim(T)
+        for i in range(self.max_seq_len - 1):
+            self.next_mask[i, i + 1] = 1
+        self.result_put = torch.zeros(self.params.max_batch_size, self.params.max_seq_len, dtype=torch.long)
+
+    
+    def forward(self,  trans_valid: torch.Tensor, trans_dense: torch.Tensor, trans_op: torch.Tensor, start_pos = 0):
+        result_put = self.result_put.clone().detach().to(self.params.device)
+        
+        return result_put
 
 class Arth_Model(nn.Module):
     def __init__(self, params: ArthModelArgs):
