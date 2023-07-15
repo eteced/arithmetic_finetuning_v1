@@ -51,7 +51,7 @@ def arth_train_one_epoch(
     metric_logger.add_meter("lr", misc.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
     print_freq = 10
-    arth_tau = 0.1
+    arth_tau = 0.001
 
     accum_iter = args.accum_iter
 
@@ -90,7 +90,6 @@ def arth_train_one_epoch(
             # print("trans_op", trans_op[:, 0])
             loss_value = loss.item()
         else:
-            loss = None
             for tt in range(Text.shape[0]):
                 l_steps_ignore_logits, l_steps_tmp_moved_logits, l_steps_dense_op_logits, l_steps_dense_map_logits, l_steps_decimal_start_logits, l_steps_op_pred = gen_manual_aux_info(Text, tt)
                 o_steps_ignore_logits=[]
@@ -112,25 +111,51 @@ def arth_train_one_epoch(
                     o_steps_decimal_start_logits.append(x[tt])
                 for x in steps_op_pred:
                     o_steps_op_pred.append(x[tt])
+                loss_steps_ignore_logits = None
+                loss_steps_tmp_moved_logits = None
+                loss_steps_dense_op_logits = None
+                loss_steps_dense_map_logits = None
+                loss_steps_steps_decimal_start_logits = None
+                loss_steps_steps_op_pred = None
                 for i in range(len(l_steps_ignore_logits)):
-                    if loss is None:
-                        loss = loss_cp(o_steps_ignore_logits[i] / arth_tau, torch.tensor(l_steps_ignore_logits[i], dtype=torch.long))
+                    if loss_steps_ignore_logits is None:
+                        loss_steps_ignore_logits = loss_cp(o_steps_ignore_logits[i] / arth_tau, torch.tensor(l_steps_ignore_logits[i], dtype=torch.long))
+                        loss_steps_tmp_moved_logits = loss_cp(o_steps_tmp_moved_logits[i] / arth_tau, torch.tensor(l_steps_tmp_moved_logits[i], dtype=torch.long))
+                        loss_steps_dense_op_logits = loss_cp(o_steps_dense_op_logits[i] / arth_tau, torch.tensor(l_steps_dense_op_logits[i], dtype=torch.long))
+                        loss_steps_dense_map_logits = loss_cp(o_steps_dense_map_logits[i] / arth_tau, torch.tensor(l_steps_dense_map_logits[i], dtype=torch.long))
+                        loss_steps_steps_decimal_start_logits = loss_cp(o_steps_decimal_start_logits[i] / arth_tau, torch.tensor(l_steps_decimal_start_logits[i], dtype=torch.long))
+                        loss_steps_steps_op_pred = loss_cp(o_steps_op_pred[i] / arth_tau, torch.tensor(l_steps_op_pred[i], dtype=torch.long))
                     else:
-                        loss += loss_cp(o_steps_ignore_logits[i] / arth_tau, torch.tensor(l_steps_ignore_logits[i], dtype=torch.long))
-                    loss += loss_cp(o_steps_tmp_moved_logits[i] / arth_tau, torch.tensor(l_steps_tmp_moved_logits[i], dtype=torch.long))
-                    loss += loss_cp(o_steps_dense_op_logits[i] / arth_tau, torch.tensor(l_steps_dense_op_logits[i], dtype=torch.long))
-                    loss += loss_cp(o_steps_dense_map_logits[i] / arth_tau, torch.tensor(l_steps_dense_map_logits[i], dtype=torch.long))
-                    loss += loss_cp(o_steps_decimal_start_logits[i] / arth_tau, torch.tensor(l_steps_decimal_start_logits[i], dtype=torch.long))
-                    loss += loss_cp(o_steps_op_pred[i] / arth_tau, torch.tensor(l_steps_op_pred[i], dtype=torch.long))
+                        loss_steps_ignore_logits += loss_cp(o_steps_ignore_logits[i] / arth_tau, torch.tensor(l_steps_ignore_logits[i], dtype=torch.long))
+                        loss_steps_tmp_moved_logits += loss_cp(o_steps_tmp_moved_logits[i] / arth_tau, torch.tensor(l_steps_tmp_moved_logits[i], dtype=torch.long))
+                        loss_steps_dense_op_logits += loss_cp(o_steps_dense_op_logits[i] / arth_tau, torch.tensor(l_steps_dense_op_logits[i], dtype=torch.long))
+                        loss_steps_dense_map_logits += loss_cp(o_steps_dense_map_logits[i] / arth_tau, torch.tensor(l_steps_dense_map_logits[i], dtype=torch.long))
+                        loss_steps_steps_decimal_start_logits += loss_cp(o_steps_decimal_start_logits[i] / arth_tau, torch.tensor(l_steps_decimal_start_logits[i], dtype=torch.long))
+                        loss_steps_steps_op_pred += loss_cp(o_steps_op_pred[i] / arth_tau, torch.tensor(l_steps_op_pred[i], dtype=torch.long))
                     # print('>> ', i, "steps_decimal_start_logits", steps_decimal_start_logits[i], "text", Text,"l_steps_decimal_start_logits", l_steps_decimal_start_logits[i])
-                    # print('>> ', i, "o_steps_op_pred[i]", o_steps_op_pred[i], "l_steps_op_pred[i]", l_steps_op_pred)
+                    # print('>> ', i, "o_steps_dense_op_logits[i]", o_steps_dense_op_logits[i], "l_steps_dense_op_logits[i]", l_steps_dense_op_logits[i])
+            loss = loss_steps_ignore_logits + loss_steps_tmp_moved_logits + loss_steps_dense_op_logits + loss_steps_dense_map_logits + loss_steps_steps_decimal_start_logits + loss_steps_steps_op_pred
+            # loss = 100 * loss_steps_ignore_logits + 100 * loss_steps_tmp_moved_logits + 5 * loss_steps_dense_map_logits + 100 * loss_steps_steps_decimal_start_logits + loss_steps_steps_op_pred
             loss_value = loss.item()
+            loss_steps_ignore_logits_value = loss_steps_ignore_logits.item()
+            loss_steps_tmp_moved_logits_value = loss_steps_tmp_moved_logits.item()
+            loss_steps_dense_op_logits_value = loss_steps_dense_op_logits.item()
+            loss_steps_dense_map_logits_value = loss_steps_dense_map_logits.item()
+            loss_steps_steps_decimal_start_logits_value = loss_steps_steps_decimal_start_logits.item()
+            loss_steps_steps_op_pred_value = loss_steps_steps_op_pred.item()
+            # sys.exit(1)
         if not math.isfinite(loss_value):
             print("[Warning]: Loss is {}, in training, please check!!!! skip the batch".format(loss_value), " text: ", Text)
             continue
             # sys.exit(1)
         
         metric_logger.update(closs=loss_value)
+        metric_logger.update(loss_steps_ignore_logits_value=loss_steps_ignore_logits_value)
+        metric_logger.update(loss_steps_tmp_moved_logits_value=loss_steps_tmp_moved_logits_value)
+        metric_logger.update(loss_steps_dense_op_logits_value=loss_steps_dense_op_logits_value)
+        metric_logger.update(loss_steps_dense_map_logits_value=loss_steps_dense_map_logits_value)
+        metric_logger.update(loss_steps_steps_decimal_start_logits_value=loss_steps_steps_decimal_start_logits_value)
+        metric_logger.update(loss_steps_steps_op_pred_value=loss_steps_steps_op_pred_value)
         loss /= accum_iter
 
         if args.device != 'cpu':
@@ -147,12 +172,24 @@ def arth_train_one_epoch(
         metric_logger.update(lr=lr)
 
         misc.all_reduce_mean(loss_value)
+        misc.all_reduce_mean(loss_steps_ignore_logits_value)
+        misc.all_reduce_mean(loss_steps_tmp_moved_logits_value)
+        misc.all_reduce_mean(loss_steps_dense_op_logits_value)
+        misc.all_reduce_mean(loss_steps_dense_map_logits_value)
+        misc.all_reduce_mean(loss_steps_steps_decimal_start_logits_value)
+        misc.all_reduce_mean(loss_steps_steps_op_pred_value)
         if log_writer is not None and (data_iter_step + 1) % accum_iter == 0:
             """We use epoch_1000x as the x-axis in tensorboard.
             This calibrates different curves when batch size changes.
             """
             epoch_1000x = int((data_iter_step / len(data_loader) + epoch) * 1000)
             log_writer.add_scalar("train_loss", loss_value, epoch_1000x)
+            log_writer.add_scalar("loss_steps_ignore_logits_value", loss_steps_ignore_logits_value, epoch_1000x)
+            log_writer.add_scalar("loss_steps_tmp_moved_logits_value", loss_steps_ignore_logits_value, epoch_1000x)
+            log_writer.add_scalar("loss_steps_dense_op_logits_value", loss_steps_ignore_logits_value, epoch_1000x)
+            log_writer.add_scalar("loss_steps_dense_map_logits_value", loss_steps_ignore_logits_value, epoch_1000x)
+            log_writer.add_scalar("loss_steps_steps_decimal_start_logits_value", loss_steps_ignore_logits_value, epoch_1000x)
+            log_writer.add_scalar("loss_steps_steps_op_pred_value", loss_steps_ignore_logits_value, epoch_1000x)
             log_writer.add_scalar("lr", lr, epoch_1000x)
 
     # gather the stats from all processes

@@ -8,6 +8,7 @@ import math
 import torch
 from torch import nn
 import torch.nn.functional as F
+from ..arthmetic_model.model import *
 
 import fairscale.nn.model_parallel.initialize as fs_init
 from fairscale.nn.model_parallel.layers import (
@@ -174,6 +175,12 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
+class ArthTransferBlock(nn.modules):
+    def __init__(self, layer_id: int, args: ArthModelArgs):
+        super().__init__()
+        self.args = args
+        self.arth_model_frozen = Arth_Model()
+        
 
 class TransformerBlock(nn.Module):
     def __init__(self, layer_id: int, args: ModelArgs):
@@ -196,11 +203,12 @@ class TransformerBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, params: ModelArgs):
+    def __init__(self, params: ModelArgs, arth_params: ArthModelArgs):
         super().__init__()
         self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
+        self.arth_params = arth_params
 
         self.tok_embeddings = ParallelEmbedding(
             params.vocab_size, params.dim, init_method=lambda x: x
@@ -219,7 +227,6 @@ class Transformer(nn.Module):
             self.params.dim // self.params.n_heads, self.params.max_seq_len * 2
         )
 
-    @torch.inference_mode()
     def forward(self, tokens: torch.Tensor, start_pos: int):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)

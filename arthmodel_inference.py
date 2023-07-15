@@ -94,7 +94,7 @@ def get_args_parser():
 
     # Model parameters
     parser.add_argument("--llama_model_path", default="/home/eteced/dl_workspace/model_repo.folder/llama_ord/", type=str, help="path of llama model")
-    parser.add_argument("--checkpoint", default="./checkpoint/checkpoint-2.pth", type=str, help="path of llama model")
+    parser.add_argument("--checkpoint", default="./checkpoint_final_202307142226/checkpoint-0.pth", type=str, help="path of llama model")
     return parser
 
 def arthmodel_load(args, args_for_model : ArthModelArgs, **kwargs):
@@ -124,7 +124,8 @@ def test_arth_to_dense(args):
     tokenizer = Tokenizer(model_path=args.llama_model_path + "/tokenizer.model")
     # text="13.45"
     # text_list=["90.12", "1.234", "567.9"]
-    text_list=["32716.022586 * 48959.059241 71809.071167 41330.026497 ^ 62365.021137 ^ * 27002.081354 + 88707.069639 / ^ 65903.013672"]
+    # text_list=["32716.022586 * 48959.059241 71809.071167 41330.026497 ^ 62365.021137 ^ * 27002.081354 + 88707.069639 / ^ 65903.013672"]
+    text_list=["24895.045487 * 59404.090586 ^ 39265.011407 87531.080102 82825.058262 57437.093692 + 26169.032728 50103.073226 ^ - *"]
     model.eval()
     lst_tokens=[]
     for x in text_list:
@@ -174,5 +175,5 @@ def test_arth_calc(args):
 if __name__ == "__main__":
     args = get_args_parser()
     args = args.parse_args()
-    # test_arth_to_dense(args)
-    test_arth_calc(args)
+    test_arth_to_dense(args)
+    # test_arth_calc(args)
