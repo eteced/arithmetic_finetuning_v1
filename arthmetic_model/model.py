@@ -48,7 +48,7 @@ class ArthModelArgs:
     tdtype = torch.float64
     ndtype = torch.float16
     llm_emb_dtype = torch.float16
-    device: str = "gpu"
+    device: str = "cuda"
     output_steps: bool = False
     debug_trace: bool =  False
     use_argmax: bool = True
@@ -280,9 +280,15 @@ class ArthTextToDenseBlock(nn.Module):
             op_valid = torch.tile(op_set_and_move_gate.view(-1, 1), (1, self.dim)) * pos_handle_mask
             dense_valid = torch.tile(torch.max(dense_op_gate[:,1:], dim=-1).values.view(-1, 1), (1, self.dim)) * pos_handle_mask
             trans_valid_gate_stack = torch.concat([trans_valid_ord, op_valid, dense_valid], dim=-1)
-            trans_valid_update = torch.tile(torch.max(trans_valid_gate_stack, dim=-1).values.view(-1, 1), (1, self.dim)) * pos_handle_mask
+            if self.args.debug_trace == True:
+                print("> ", i, " > trans_valid", trans_valid)
+                print("> ", i, " > trans_valid_ord", trans_valid_ord)
+                print("> ", i, " > op_valid", op_valid)
+                print("> ", i, " > dense_valid", dense_valid)
+            trans_valid_update = torch.tile(torch.max(trans_valid_gate_stack, dim=-1).values.view(-1, 1), (1, self.dim)) * pos_handle_mask + (torch.ones_like(pos_handle_mask) - pos_handle_mask) * trans_valid
             trans_valid = torch.tile(ignore_gate.view(-1, 1), (1, self.dim)) * trans_valid + torch.tile((torch.ones_like(ignore_gate) - ignore_gate).view(-1, 1), (1,self.dim)) * trans_valid_update
-
+            if self.args.debug_trace == True:
+                print("> ", i, " > 2trans_valid", trans_valid)
             # move to next
             pos_tmp_gate = (torch.ones_like(ignore_gate) - ignore_gate) * move_next_gate
             pos_tmp_apply_gate = pos_tmp_gate.view(-1, 1)
@@ -347,8 +353,14 @@ class ArthDenseCalcToDenseBlock(nn.Module):
         hold_numbers = self.hold_numbers.clone().detach().requires_grad_(True).to(self.device) # B x dim(T)
         hold_status = self.hold_status.clone().detach().requires_grad_(True).to(self.device) # B x 2
         hold_index = self.hold_index.clone().detach().requires_grad_(False).to(self.device) # B x 2
-        meet_op = torch.zeros(self.args.max_batch_size, dtype=self.args.ndtype)
+        meet_op = torch.zeros(self.args.max_batch_size, dtype=self.args.ndtype).to(self.device)
 
+        if self.args.debug_trace == True:
+            print("---------------ArthDenseCalcToDenseBlock-------------------")
+            print("trans_valid", trans_valid)
+            print("trans_dense", trans_dense)
+            print("trans_op", trans_op)
+            print("---------------ArthDenseCalcToDenseBlock-Handle-BEGIN--------------")
         for i in range(start_pos, trans_valid.shape[1]):
             i_trans_valid = trans_valid[:, i] * (torch.ones_like(meet_op) - meet_op) * (torch.ones_like(if_finished) - if_finished)
             i_trans_dense = trans_dense[:, i]
@@ -365,28 +377,33 @@ class ArthDenseCalcToDenseBlock(nn.Module):
             dense_applied = dense_applied_gate.view(-1, 1)
             dense_applied = torch.tile(dense_applied, (1, 2))
             hold_numbers = dense_applied.to(self.args.tdtype) *  torch.matmul(hold_numbers, self.next_mask.to(self.args.tdtype)) + (torch.ones_like(dense_applied.to(self.args.tdtype)) - dense_applied.to(self.args.tdtype)) * hold_numbers
-            hold_status = dense_applied *  torch.matmul(hold_status, self.next_mask) + (torch.ones_like(dense_applied) - dense_applied) * hold_status
-            hold_index = dense_applied.long() *  torch.matmul(hold_index, self.next_mask_long) + (torch.ones_like(dense_applied.long()) - dense_applied.long()) * hold_index
+            hold_status = dense_applied.to(hold_status) * torch.matmul(hold_status, self.next_mask.to(hold_status)) + (torch.ones_like(dense_applied.to(hold_status)) - dense_applied.to(hold_status)) * hold_status
+            hold_index = dense_applied.long().cpu() *  torch.matmul(hold_index.cpu(), self.next_mask_long.cpu()) + (torch.ones_like(dense_applied.long().cpu()) - dense_applied.long().cpu()) * hold_index.cpu()
+            hold_index = hold_index.to(self.args.device)
             
-            print("> ", i, "> not_op_gate", not_op_gate)
-            print("> ", i, "> dense_applied_gate", dense_applied_gate)
-            print("> ", i, "> hold_numbers", hold_numbers)
-            print("> ", i, "> hold_status", hold_status)
-            print("> ", i, "> hold_index", hold_index)
+            if self.args.debug_trace == True:
+                print("> ", i, "> not_op_gate", not_op_gate)
+                print("> ", i, "> dense_applied_gate", dense_applied_gate)
+                print("> ", i, "> hold_numbers", hold_numbers)
+                print("> ", i, "> hold_status", hold_status)
+                print("> ", i, "> hold_index", hold_index)
 
             hold_index[:, 0] = hold_index[:, 0] * (torch.ones_like(dense_applied_gate.long()) - dense_applied_gate.long()) + dense_applied_gate.long() * i
             hold_status[:, 0] = hold_status[:, 0] * (torch.ones_like(dense_applied_gate) - dense_applied_gate) + torch.ones_like(dense_applied_gate) * dense_applied_gate
             hold_numbers[:, 0] = hold_numbers[:, 0] * (torch.ones_like(dense_applied_gate) - dense_applied_gate) + torch.ones_like(dense_applied_gate) * dense_applied_gate * i_trans_dense
 
-            print("> ", i, "> 2 hold_numbers", hold_numbers)
-            print("> ", i, "> 2 hold_status", hold_status)
-            print("> ", i, "> 2 hold_index", hold_index)
+            if self.args.debug_trace == True:
+                print("> ", i, "> 2 hold_numbers", hold_numbers)
+                print("> ", i, "> 2 hold_status", hold_status)
+                print("> ", i, "> 2 hold_index", hold_index)
 
             # handle ops
             op_gate = (torch.ones_like(not_op_gate) - not_op_gate) * i_trans_valid * if_valid
-            print("> ", i, "> op_gate", op_gate)
+            if self.args.debug_trace == True:
+                print("> ", i, "> op_gate", op_gate)
             meet_op = torch.ones_like(op_gate) * op_gate * (torch.ones_like(meet_op) - meet_op) + meet_op
-            print("> ", i, "> meet_op", meet_op)
+            if self.args.debug_trace == True:
+                print("> ", i, "> meet_op", meet_op)
             if_valid = op_gate * hold_status[:, 0] * hold_status[:, 1] + (torch.ones_like(op_gate) - op_gate) * if_valid
             dense_add = hold_numbers[:, 1] + hold_numbers[:, 0]
             dense_minus = hold_numbers[:, 1] - hold_numbers[:, 0]
@@ -407,11 +424,15 @@ class ArthDenseCalcToDenseBlock(nn.Module):
             dense_calc_tile = torch.tile(dense_calc.view(-1, 1), (1, self.args.max_seq_len))
             trans_dense = trans_dense * (torch.ones_like(final_op_gate_tile) - final_op_gate_tile) + trans_dense * final_op_gate_tile * (torch.ones_like(one_hot_number2) - one_hot_number2) + \
                           dense_calc_tile * final_op_gate_tile * one_hot_number2
-            print("> ", i, "> trans_valid", trans_valid)
+            if self.args.debug_trace == True:
+                print("> ", i, "> trans_valid", trans_valid)
             trans_valid[:, i] = trans_valid[:, i] * (torch.ones_like(final_op_gate) - final_op_gate)
-            print("> ", i, "> 2 trans_valid", trans_valid)
+            if self.args.debug_trace == True:
+                print("> ", i, "> 2 trans_valid", trans_valid)
             # reset hold_status[:, 0]
             hold_status[:, 0] = hold_status[:, 0] * (torch.ones_like(final_op_gate) - final_op_gate)
+            if self.args.debug_trace == True:
+                print("> ", i, "> trans_dense", trans_dense)
 
         if_finished_update = if_valid * (torch.ones_like(meet_op) - meet_op) * (hold_status[:, 0]) * (torch.ones_like(hold_status[:, 0]) - hold_status[:, 1])
         if_finished = (torch.ones_like(if_finished) - if_finished) * if_finished_update + if_finished
@@ -433,7 +454,7 @@ class ArthCalcModule(nn.Module):
         self.init_acc_block()
     
     def init_acc_block(self):
-        for i in range(0, 4):
+        for i in range(0, self.max_seq_len + 1):
             self.acc_blocks.append(ArthDenseCalcToDenseBlock(self.params))
     
     def forward(self, trans_valid: torch.Tensor, trans_dense: torch.Tensor, trans_op: torch.Tensor, start_pos = 0):
@@ -441,7 +462,8 @@ class ArthCalcModule(nn.Module):
         if_valid = torch.ones(self.max_batch_size)
         i = 0
         for layer in self.acc_blocks:
-            print("----------------- ", i, " -----------------")
+            if self.args.debug_trace == True:
+                print("----------------- ", i, " -----------------")
             i=i+1
             trans_valid, trans_dense, trans_op, if_finished, if_valid = layer(trans_valid, trans_dense, trans_op, if_finished, if_valid, start_pos)
         return trans_valid, trans_dense, trans_op, if_finished, if_valid            
@@ -480,15 +502,17 @@ class ArthDenseToTextEmbeddingModuleSimp(nn.Module):
         float_str = float_values.detach().numpy().astype("str")
         lst_final_tokens=[]
         for i in range(len(float_str)):
-            token = self.tokenizer.encode(float_str[i], bos=True, eos=True)
+            if self.params.debug_trace == True:
+                print("> i > float_str", float_str)
+            token = self.tokenizer.encode(str(float_str[i]), bos=True, eos=True)
             while len(token) < self.max_seq_len:
-                token.append(-1)
+                token.append(0)
             token = token[:self.max_seq_len]
             lst_final_tokens.append(token)
         return torch.tensor(lst_final_tokens, dtype=torch.int64)
 
 class Arth_Model(nn.Module):
-    def __init__(self, params: ArthModelArgs):
+    def __init__(self, params: ArthModelArgs, tokenizer):
         super().__init__()
         self.params = params
         self.vocab_size = params.vocab_size
@@ -497,11 +521,17 @@ class Arth_Model(nn.Module):
             params.vocab_size, params.dim, device=params.device)
 
         self.artd = ArthTextToDenseBlock(0, params)
+        self.calc_block = ArthDenseCalcToDenseBlock(params)
+        self.artt = ArthDenseToTextEmbeddingModuleSimp(params, tokenizer)
         self.output_steps = params.output_steps
 
-    def forward(self, tokens: torch.Tensor, start_pos: int):
-        _bsz, seqlen = tokens.shape
-        h = self.tok_embeddings(tokens)
+    def forward(self, tokens: torch.Tensor, start_pos: int, tokens_is_index: True):
+        if tokens_is_index:
+            _bsz, seqlen = tokens.shape
+            h = self.tok_embeddings(tokens)
+        else:
+            _bsz, seqlen, dim_ = tokens.shape
+            h = tokens
 
         mask = None
         if seqlen > 1:
@@ -510,7 +540,12 @@ class Arth_Model(nn.Module):
 
         if self.output_steps == False:
             trans_valid, trans_dense, trans_op = self.artd(h, start_pos, mask)
-            return trans_valid, trans_dense, trans_op
         else:
             trans_valid, trans_dense, trans_op, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = self.artd(h, start_pos, mask)
-            return trans_valid, trans_dense, trans_op, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred
+        
+        trans_valid, trans_dense, trans_op, if_finished, if_valid = self.calc_block(trans_valid, trans_dense, trans_op, torch.zeros(_bsz, dtype=self.params.ndtype).to(self.params.device), torch.ones(_bsz, dtype=self.params.ndtype).to(self.params.device))
+        arth_tokens = self.artt(trans_valid, trans_dense, trans_op)
+        if self.output_steps == False:
+            return arth_tokens
+        else:
+            return arth_tokens, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred 

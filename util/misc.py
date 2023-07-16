@@ -234,6 +234,7 @@ def init_distributed_mode(args):
         print('Not using distributed mode')
         setup_for_distributed(is_master=True)  # hack
         args.distributed = False
+        print("!!!!!!!!!!!!!!!!!!!!Warning! goes here!!!!!")
         return
 
     args.distributed = True
@@ -244,6 +245,7 @@ def init_distributed_mode(args):
         args.rank, args.dist_url, args.gpu), flush=True)
     torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                          world_size=args.world_size, rank=args.rank)
+    print("!!!!!!!!!!!!!!!!!!!!Init init_process_group!!!!!")
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
 
