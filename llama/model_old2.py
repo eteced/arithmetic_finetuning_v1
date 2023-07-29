@@ -31,8 +31,6 @@ class ModelArgs:
     arth_math_layers: list = field(default_factory=lambda: [x for x in range(16, 24)])
     # arth_influence_layers: list = field(default_factory=lambda: [])
     arth_insert_layer_after: int = 23
-    arth_extra_think_len: int = 32
-    arth_extra_token_begin: list = field(default_factory=lambda: [1, 1738, 1433, 386, 3195, 7867, 29901, 259])
     adapter_len: int = 64
 
 class RMSNorm(torch.nn.Module):
@@ -251,11 +249,8 @@ class Transformer(nn.Module):
         _bsz, seqlen = tokens.shape
         # print('tokens', tokens)
         # print('example_mask', example_mask)
-        h = self.tok_embeddings(tokens).detach().requires_grad_(False)
-        arth_fill = self.tok_embeddings(torch.Tensor([self.arth_params.padding_token]).long().to(h.device))
-        # h = self.tok_embeddings(tokens)
-        arth_prefix_len = len(self.params.arth_extra_token_begin)
-        arth_token_prefix = torch.tile(torch.Tensor(self.params.arth_extra_token_begin).long().view(1, -1), (_bsz, 1)).to(h.device)
+        # h = self.tok_embeddings(tokens).detach().requires_grad_(False)
+        h = self.tok_embeddings(tokens)
         h_ord = h
         adapter_index = -1
         math_adapter_index = -1
@@ -266,9 +261,6 @@ class Transformer(nn.Module):
         # use only the prompt to predict math interaction
         h_for_math = h * example_mask_tile
         non_ord_prompt_begin = torch.sum(example_mask, dim=-1).long()
-        extra_padding = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.params.arth_extra_think_len, 1))
-        for i in range(_bsz):
-            h_for_math[:, non_ord_prompt_begin[i] : non_ord_prompt_begin[i] + self.params.arth_extra_think_len,: ] = extra_padding[i, : ,:]
         # forward math part
         for layer_index in range(0, self.params.arth_insert_layer_after + 1):
             freqs_cis = self.freqs_cis.to(h.device)
@@ -284,33 +276,26 @@ class Transformer(nn.Module):
         lst_h_gate_logits = []
         lst_h_arth = []
         for i in range(_bsz):
-            h_gate_logits = h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len,:]
-            h_arth = h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1 : non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1 + self.arth_params.max_seq_len, :]
+            h_gate_logits = h_for_math[i, non_ord_prompt_begin[i],:]
+            h_arth = h_for_math[i, non_ord_prompt_begin[i] + 1 : non_ord_prompt_begin[i] + 1 + self.arth_params.max_seq_len, :]
             lst_h_gate_logits.append(h_gate_logits)
             lst_h_arth.append(h_arth)
         m_h_gate_logits = torch.stack(lst_h_gate_logits)
         m_h_arth = torch.stack(lst_h_arth)
-        # m_h_arth = self.norm(m_h_arth)
         # now call arth math
         h_for_arth = self.emb_transfer_nn(m_h_arth.float())
         h_gate_logits = self.arth_gate_nn(m_h_gate_logits.float())
         h_gate_logits = self.norm_gate(h_gate_logits)  # also learns whether enable arth model
         h_arth_output = self.output_arth(h_for_arth.half()) # for supervised reverse polish notation
         # print(">>> h_gate_logits", h_gate_logits)
-        # print(">>> h_arth_output", torch.argmax(h_arth_output, dim=-1))
         if self.arth_params.output_steps == False:
             arth_result_tokens = self.arth_block(h_for_arth.half(), start_pos=0)
         else:
             arth_result_tokens, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = self.arth_block(h_for_arth.half(), start_pos=0)
-        arth_result_tokens = torch.concat([arth_token_prefix, arth_result_tokens.to(h.device)], axis=-1)
-        # print(">>> arth_result_tokens", arth_result_tokens)
-        # cut the tokens
-        arth_result_tokens = arth_result_tokens[:, : self.arth_params.max_seq_len]
-        extra_padding_arth_result = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.arth_params.max_seq_len, 1))
         q_new = self.tok_embeddings(arth_result_tokens.to(self.arth_params.device))
         q_update = self.argmax_onehot(h_gate_logits)[:, 1] # B
         q_update_tile = torch.tile(q_update.view(-1, 1, 1), (1, self.arth_params.max_seq_len, self.params.dim)).to(h)
-        q_new_final = q_new * q_update_tile + (torch.ones_like(q_update_tile) - q_update_tile) * extra_padding_arth_result
+        q_new_final = q_new * q_update_tile
         # inject prompt
         h_new = torch.zeros(_bsz, seqlen + self.arth_params.max_seq_len, self.params.dim)
         q_update_t = torch.tile(q_update.view(-1, 1), (1, self.arth_params.max_seq_len))
@@ -355,10 +340,7 @@ class Transformer(nn.Module):
         print('tokens', tokens)
         example_mask = tokens.gt(0)
         h = self.tok_embeddings(tokens).detach().requires_grad_(False)
-        arth_fill = self.tok_embeddings(torch.Tensor([self.arth_params.padding_token]).long().to(h.device))
-        # h = self.tok_embeddings(tokens)
-        arth_prefix_len = len(self.params.arth_extra_token_begin)
-        arth_token_prefix = torch.tile(torch.Tensor(self.params.arth_extra_token_begin).long().view(1, -1), (_bsz, 1)).to(h.device)
+        # print("h", h[:, :, 0])
         h_ord = h
         adapter_index = -1
         math_adapter_index = -1
@@ -369,9 +351,6 @@ class Transformer(nn.Module):
         # use only the prompt to predict math interaction
         h_for_math = h * example_mask_tile
         non_ord_prompt_begin = torch.sum(example_mask, dim=-1).long()
-        extra_padding = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.params.arth_extra_think_len, 1))
-        for i in range(_bsz):
-            h_for_math[:, non_ord_prompt_begin[i] : non_ord_prompt_begin[i] + self.params.arth_extra_think_len,: ] = extra_padding[i, : ,:]
         # forward math part
         for layer_index in range(0, self.params.arth_insert_layer_after + 1):
             freqs_cis = self.freqs_cis.to(h.device)
@@ -387,8 +366,8 @@ class Transformer(nn.Module):
         lst_h_gate_logits = []
         lst_h_arth = []
         for i in range(_bsz):
-            h_gate_logits = h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len,:]
-            h_arth = h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1 : non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1 + self.arth_params.max_seq_len, :]
+            h_gate_logits = h_for_math[i, non_ord_prompt_begin[i],:]
+            h_arth = h_for_math[i, non_ord_prompt_begin[i] + 1 : non_ord_prompt_begin[i] + 1 + self.arth_params.max_seq_len, :]
             lst_h_gate_logits.append(h_gate_logits)
             lst_h_arth.append(h_arth)
         m_h_gate_logits = torch.stack(lst_h_gate_logits)
@@ -399,25 +378,25 @@ class Transformer(nn.Module):
         h_gate_logits = self.norm_gate(h_gate_logits)  # also learns whether enable arth model
         h_arth_output = self.output_arth(h_for_arth.half()) # for supervised reverse polish notation
         print(">>> h_gate_logits", h_gate_logits)
-        print(">>> h_arth_output", torch.argmax(h_arth_output, dim=-1))
+        print(">>> h_for_arth", h_for_arth.shape)
+        print(">>> h_arth_output.shape", h_arth_output.shape)
+        print(">>> h_arth_output tokens", torch.argmax(h_arth_output[0, :, :], dim=-1))
         if self.arth_params.output_steps == False:
             arth_result_tokens = self.arth_block(h_for_arth.half(), start_pos=0)
         else:
             arth_result_tokens, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = self.arth_block(h_for_arth.half(), start_pos=0)
-        arth_result_tokens = torch.concat([arth_token_prefix, arth_result_tokens.to(h.device)], axis=-1)
-        print(">>> arth_result_tokens", arth_result_tokens)
-        # cut the tokens
-        arth_result_tokens = arth_result_tokens[:, : self.arth_params.max_seq_len]
-        extra_padding_arth_result = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.arth_params.max_seq_len, 1))
         q_new = self.tok_embeddings(arth_result_tokens.to(self.arth_params.device))
         q_update = self.argmax_onehot(h_gate_logits)[:, 1] # B
         q_update_tile = torch.tile(q_update.view(-1, 1, 1), (1, self.arth_params.max_seq_len, self.params.dim)).to(h)
-        q_new_final = q_new * q_update_tile + (torch.ones_like(q_update_tile) - q_update_tile) * extra_padding_arth_result
+        q_new_final = q_new * q_update_tile
+        print(">> arth_result_tokens", arth_result_tokens)
         # inject prompt
         h_new = torch.zeros(_bsz, seqlen + self.arth_params.max_seq_len, self.params.dim)
         q_update_t = torch.tile(q_update.view(-1, 1), (1, self.arth_params.max_seq_len))
         mq_token = arth_result_tokens.to(h.device) * q_update_t.to(h.device)
         max_q_index = torch.sum((mq_token != 0), axis=-1)
+        print(">> mq_token", mq_token)
+        print(">> max_q_index", max_q_index)
         for i in range(_bsz):
             h_new[i, :non_ord_prompt_begin[i], :] = h_ord[i, :non_ord_prompt_begin[i], :] # copy the ord token
             mq_index = max_q_index[i].item()

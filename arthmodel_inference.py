@@ -131,7 +131,9 @@ def test_arth_to_dense(args):
     model.eval()
     lst_tokens=[]
     for x in text_list:
-        list_tokens=tokenizer.encode(x,bos=True,eos=True)
+        # list_tokens=tokenizer.encode(x,bos=True,eos=True)
+        list_tokens = [1, 29871, 29941, 29889, 29945, 29871, 29906, 29889, 29955,   334,
+         29871, 29947, 29889, 29953,   718,     2]
         list_arth_tokens=transfer_token_ids(list_tokens, default_arth_args.dict_vocb_map)
         lst_tokens.append(list_arth_tokens)
     print("lst_tokens", lst_tokens)

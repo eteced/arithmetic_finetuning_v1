@@ -40,6 +40,12 @@ PROMPT_DICT = {
         "Write a response that appropriately completes the request.\n\n"
         "### Instruction:\n{instruction}\n\n### Response:"
     ),
+    "no_prompt_input": (
+        "{instruction} # {input} $ "
+    ),
+    "no_prompt": (
+        "{instruction} $ "
+    )
 }
 
 # we insert arithmetic problems into alpaca_data
@@ -54,7 +60,7 @@ class InstructionDataset(Dataset):
         if partition == "train":
             self.ann = self.ann
         else:
-            self.ann = self.ann[:10]
+            self.ann = self.ann[:min(10,len(self.ann))]
 
         self.max_words = max_words
         self.swift_max_words = swift_max_words
@@ -67,9 +73,9 @@ class InstructionDataset(Dataset):
     def __getitem__(self, index):
         ann = self.ann[index]
         if ann.get("input", "") == "":
-            prompt = PROMPT_DICT["prompt_no_input"].format_map(ann)
+            prompt = PROMPT_DICT["no_prompt"].format_map(ann)
         else:
-            prompt = PROMPT_DICT["prompt_input"].format_map(ann)
+            prompt = PROMPT_DICT["no_prompt_input"].format_map(ann)
         example = prompt + ann["output"]
         prompt = torch.tensor(self.tokenizer1.encode(prompt, bos=True, eos=False), dtype=torch.int64)
         example = torch.tensor(self.tokenizer1.encode(example, bos=True, eos=True), dtype=torch.int64)
@@ -84,11 +90,14 @@ class InstructionDataset(Dataset):
         label_mask = labels.ge(0)
         example[~example_mask] = 0
         labels[~label_mask] = 0
+        prompt_mask = torch.ones_like(example_mask)
+        prompt_mask[len(prompt):] = 0
         example_mask = example_mask.float()
         label_mask = label_mask.float()
+        prompt_mask = prompt_mask.float()
         swift_express = ann.get("swift_express", "")
         if swift_express != "":
-           swift_tokens = torch.tensor(self.tokenizer1.encode(swift_express, bos=True, eos=True), dtype=torch.int64)
+           swift_tokens = torch.tensor(self.tokenizer1.encode(swift_express, bos=False, eos=False), dtype=torch.int64)
            swift_valid = torch.ones(1).float()
         else:
            swift_tokens = torch.zeros(self.swift_max_words)
@@ -99,7 +108,7 @@ class InstructionDataset(Dataset):
         elif padding < 0:
             swift_tokens = swift_tokens[: self.swift_max_words]
 
-        return example, labels, example_mask, swift_tokens, swift_valid
+        return example, labels, prompt_mask, swift_tokens, swift_valid
 
 def get_args_parser():
     parser = argparse.ArgumentParser("ArthLLaMA pre-training", add_help=False)
@@ -165,6 +174,7 @@ def get_args_parser():
     parser.add_argument("--local_rank", default=-1, type=int)
     parser.add_argument("--dist_on_itp", action="store_true")
     parser.add_argument("--dist_url", default="env://", help="url used to set up distributed training")
+    parser.add_argument("--eval", default=False, type=bool, help="clear optimizer")
 
     return parser
 
@@ -209,6 +219,8 @@ def main(args):
         print("Sampler_train = %s" % str(sampler_train))
     else:
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        sampler_val = torch.utils.data.RandomSampler(dataset_val)
+        global_rank = 0
 
     if global_rank == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
@@ -302,6 +314,10 @@ def main(args):
                 log_writer.flush()
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
+        
+        # because of some unknowned gpu memory leak, i have to train one epoch (with size < 460) then quit and restart
+        # however, a running wrapper will be provided to automatically continue training
+        exit(1)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

@@ -34,6 +34,7 @@ class ArthModelArgs:
     vocab_size: int = 25  # 0 1 2 3 4 5 6 7 8 9 . + - * / e ^ ( ) [BOS]{21} [EOS]{22} [SEP/space]{23}
     norm_eps: float = 1e-5
     arth_tau: float = 0.001
+    padding_token: int = 259
 
     max_batch_size: int = 32
     max_seq_len: int = 128
@@ -496,6 +497,7 @@ class ArthDenseToTextEmbeddingModuleSimp(nn.Module):
         self.params = params
         self.tokenizer = tokenizer
         self.max_seq_len = params.max_seq_len
+        self.padding_token = params.padding_token
 
     def forward(self,  trans_valid: torch.Tensor, trans_dense: torch.Tensor, trans_op: torch.Tensor, start_pos = 0):
         float_values = torch.sum(trans_valid * trans_dense, -1).cpu().detach()
@@ -504,9 +506,9 @@ class ArthDenseToTextEmbeddingModuleSimp(nn.Module):
         for i in range(len(float_str)):
             if self.params.debug_trace == True:
                 print("> i > float_str", float_str)
-            token = self.tokenizer.encode(str(float_str[i]), bos=True, eos=True)
+            token = self.tokenizer.encode(str(float_str[i]), bos=False, eos=False)
             while len(token) < self.max_seq_len:
-                token.append(0)
+                token.append(self.padding_token)
             token = token[:self.max_seq_len]
             lst_final_tokens.append(token)
         return torch.tensor(lst_final_tokens, dtype=torch.int64)
