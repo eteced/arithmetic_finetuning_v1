@@ -14,7 +14,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from arthmetic_model.model import *
-
+DEBUG_ENABLE = False
 
 @dataclass
 class ModelArgs:
@@ -249,8 +249,9 @@ class Transformer(nn.Module):
 
     def forward(self, tokens: torch.Tensor, example_mask: torch.Tensor, start_pos = 0):
         _bsz, seqlen = tokens.shape
-        # print('tokens', tokens)
-        # print('example_mask', example_mask)
+        if DEBUG_ENABLE:
+            print('tokens', tokens)
+            print('example_mask', example_mask)
         h = self.tok_embeddings(tokens).detach().requires_grad_(False)
         arth_fill = self.tok_embeddings(torch.Tensor([self.arth_params.padding_token]).long().to(h.device))
         # h = self.tok_embeddings(tokens)
@@ -296,14 +297,16 @@ class Transformer(nn.Module):
         h_gate_logits = self.arth_gate_nn(m_h_gate_logits.float())
         h_gate_logits = self.norm_gate(h_gate_logits)  # also learns whether enable arth model
         h_arth_output = self.output_arth(h_for_arth.half()) # for supervised reverse polish notation
-        # print(">>> h_gate_logits", h_gate_logits)
-        # print(">>> h_arth_output", torch.argmax(h_arth_output, dim=-1))
+        if DEBUG_ENABLE:
+            print(">>> h_gate_logits", h_gate_logits)
+            print(">>> h_arth_output", torch.argmax(h_arth_output, dim=-1))
         if self.arth_params.output_steps == False:
             arth_result_tokens = self.arth_block(h_for_arth.half(), start_pos=0)
         else:
             arth_result_tokens, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = self.arth_block(h_for_arth.half(), start_pos=0)
         arth_result_tokens = torch.concat([arth_token_prefix, arth_result_tokens.to(h.device)], axis=-1)
-        # print(">>> arth_result_tokens", arth_result_tokens)
+        if DEBUG_ENABLE:
+            print(">>> arth_result_tokens", arth_result_tokens)
         # cut the tokens
         arth_result_tokens = arth_result_tokens[:, : self.arth_params.max_seq_len]
         extra_padding_arth_result = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.arth_params.max_seq_len, 1))
@@ -315,6 +318,8 @@ class Transformer(nn.Module):
         h_new = torch.zeros(_bsz, seqlen + self.arth_params.max_seq_len, self.params.dim)
         q_update_t = torch.tile(q_update.view(-1, 1), (1, self.arth_params.max_seq_len))
         mq_token = arth_result_tokens.to(h.device) * q_update_t.to(h.device)
+        if DEBUG_ENABLE:
+            print(">>> mq_token", mq_token)
         max_q_index = torch.sum((mq_token != 0), axis=-1)
         for i in range(_bsz):
             h_new[i, :non_ord_prompt_begin[i], :] = h_ord[i, :non_ord_prompt_begin[i], :] # copy the ord token
@@ -350,10 +355,10 @@ class Transformer(nn.Module):
             return output.float(), h_gate_logits.float(), h_arth_output.float()
     
     @torch.inference_mode()
-    def forward_inference(self, tokens: torch.Tensor, start_pos: int, cur_pos: int, full_mode=False):
+    def forward_inference(self, tokens: torch.Tensor, example_mask: torch.Tensor, start_pos: int, cur_pos: int, full_mode=False):
         _bsz, seqlen = tokens.shape
-        print('tokens', tokens)
-        example_mask = tokens.gt(0)
+        if DEBUG_ENABLE:
+            print('tokens', tokens)
         h = self.tok_embeddings(tokens).detach().requires_grad_(False)
         arth_fill = self.tok_embeddings(torch.Tensor([self.arth_params.padding_token]).long().to(h.device))
         # h = self.tok_embeddings(tokens)
@@ -398,14 +403,16 @@ class Transformer(nn.Module):
         h_gate_logits = self.arth_gate_nn(m_h_gate_logits.float())
         h_gate_logits = self.norm_gate(h_gate_logits)  # also learns whether enable arth model
         h_arth_output = self.output_arth(h_for_arth.half()) # for supervised reverse polish notation
-        print(">>> h_gate_logits", h_gate_logits)
-        print(">>> h_arth_output", torch.argmax(h_arth_output, dim=-1))
+        if DEBUG_ENABLE:
+            print(">>> h_gate_logits", h_gate_logits)
+            print(">>> h_arth_output", torch.argmax(h_arth_output, dim=-1))
         if self.arth_params.output_steps == False:
             arth_result_tokens = self.arth_block(h_for_arth.half(), start_pos=0)
         else:
             arth_result_tokens, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = self.arth_block(h_for_arth.half(), start_pos=0)
         arth_result_tokens = torch.concat([arth_token_prefix, arth_result_tokens.to(h.device)], axis=-1)
-        print(">>> arth_result_tokens", arth_result_tokens)
+        if DEBUG_ENABLE:
+            print(">>> arth_result_tokens", arth_result_tokens)
         # cut the tokens
         arth_result_tokens = arth_result_tokens[:, : self.arth_params.max_seq_len]
         extra_padding_arth_result = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.arth_params.max_seq_len, 1))

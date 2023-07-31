@@ -15,6 +15,8 @@ import util.misc as misc
 
 output_steps = True
 big_debug = False
+VAL_DEBUG = False
+TRAINING_DEBUG = False
 
 def gen_manual_aux_info(text : torch.Tensor, batch_index=1):
     steps_ignore_logits=[]
@@ -122,18 +124,20 @@ def loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, sw
         print('h_gate_logits', h_gate_logits)
         print('swift_valids', swift_valids)
     loss_arth_gate = torch.mean(aux_criterion(h_gate_logits, swift_valids.to(h_gate_logits.device)))
+    # loss_normal = torch.tensor([0.0], requires_grad=True).to(loss_arth_gate)
     h_arth_output = h_arth_output.reshape(-1, h_arth_output.shape[2])
     swift_tokens_calc = swift_tokens.type(torch.LongTensor).flatten()
     if big_debug:
         print('h_arth_output.shape', h_arth_output.shape)
         print('swift_tokens_calc.shape', swift_tokens_calc.shape)
         print('swift_tokens.shape', swift_tokens.shape)
-        print('h_arth_output', h_arth_output)
+        print('h_arth_output', torch.argmax(h_arth_output, dim=-1))
         print("swift_tokens_calc", swift_tokens_calc)
         print('swift_valids', swift_valids)
     if torch.sum(swift_tokens_calc) > 0:
         # all ignore labels will let normal_criterion produce nan
-        loss_arth_mid_result = torch.mean(normal_criterion(h_arth_output, swift_tokens_calc.to(h_arth_output.device)) * swift_valids.to(h_arth_output))  *  50
+        # loss_arth_mid_result = torch.mean(normal_criterion(h_arth_output, swift_tokens_calc.to(h_arth_output.device)) * swift_valids.to(h_arth_output))  *  50
+        loss_arth_mid_result = torch.mean(aux_criterion(h_arth_output, swift_tokens_calc.to(h_arth_output.device)) * swift_valids.to(h_arth_output))  *  50
     else:
         loss_arth_mid_result = torch.tensor([0.0], requires_grad=True).to(loss_arth_gate)
     if big_debug:
@@ -233,6 +237,7 @@ def joined_train_one_epoch(
         print("log_dir: {}".format(log_writer.log_dir))
     for data_iter_step, (examples, labels, example_mask, swift_tokens, swift_valids) in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
+        # data_loader
     ):
         # print('examples', examples)
         # print('labels', labels)
@@ -268,9 +273,11 @@ def joined_train_one_epoch(
         if output_steps:
             del output, h_gate_logits, h_arth_output, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred
             del loss, loss_normal, loss_arth_gate, loss_arth_mid_result
+            # del examples, labels, example_mask, swift_tokens, swift_valids
         else:
             del output, h_gate_logits, h_arth_output
             del loss, loss_normal, loss_arth_gate, loss_arth_mid_result
+            # del examples, labels, example_mask, swift_tokens, swift_valids
         metric_logger.update(closs=loss_value)
         metric_logger.update(loss_normal_value=loss_normal_value)
         metric_logger.update(loss_arth_gate_value=loss_arth_gate_value)
@@ -330,8 +337,113 @@ def joined_val_one_epoch(
         print("log_dir: {}".format(log_writer.log_dir))
     for data_iter_step, (examples, labels, example_mask, swift_tokens, swift_valids) in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
+        # data_loader
     ):
-
+        # examples[0, :] = torch.Tensor([    1,  3529,   274,   562,  5987,   445, 29889,   396, 29871, 29941,
+        #  29889, 29945,   334, 29871, 29906, 29889, 29955,   718, 29871, 29947,
+        #  29889, 29953,   353,  1577,   395,     29871,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0]).to(examples)
+        # labels = torch.zeros_like(examples)
+        # example_mask[0, :] = torch.Tensor([    1,  1,   1,   1,  1,   1, 1,   1, 1, 1,
+        #      1, 1,   1, 1, 1, 1, 1,   1, 1, 1,
+        #      1, 1,   1,  1,   1,     1,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #      0,     0]).to(example_mask)
         with torch.no_grad():
             if output_steps:
                 output, h_gate_logits, h_arth_output, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred, arth_result_tokens = model(examples, example_mask)
@@ -343,17 +455,20 @@ def joined_val_one_epoch(
         loss_normal_value = loss_normal.item()
         loss_arth_gate_value = loss_arth_gate.item()
         loss_arth_mid_result = loss_arth_mid_result.item()
-        # print("examples", examples)
-        # print("swift_tokens", swift_tokens)
-        # print("h_gate_logits", h_gate_logits)
-        # print("h_arth_output", torch.argmax(h_arth_output, dim=-1))
-        # print("arth_result_tokens", arth_result_tokens)
-        # print("output_argmax", torch.argmax(output, dim=-1))
-        # print("steps_ignore_logits", steps_ignore_logits)
-        # print("steps_tmp_moved_logits", steps_tmp_moved_logits)
-        # print("steps_dense_map_logits", steps_dense_map_logits)
-        # print("steps_decimal_start_logits", steps_decimal_start_logits)
-        # print("steps_op_pred", steps_op_pred)
+        if VAL_DEBUG:
+            print("examples", examples)
+            print("labels", labels)
+            print("example_mask * example", (examples * example_mask).long())
+            print("swift_tokens", swift_tokens)
+            print("h_gate_logits", h_gate_logits)
+            print("h_arth_output", torch.argmax(h_arth_output, dim=-1))
+            print("arth_result_tokens", arth_result_tokens)
+            print("output_argmax", torch.argmax(output, dim=-1))
+            print("steps_ignore_logits", steps_ignore_logits)
+            print("steps_tmp_moved_logits", steps_tmp_moved_logits)
+            print("steps_dense_map_logits", steps_dense_map_logits)
+            print("steps_decimal_start_logits", steps_decimal_start_logits)
+            print("steps_op_pred", steps_op_pred)
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)

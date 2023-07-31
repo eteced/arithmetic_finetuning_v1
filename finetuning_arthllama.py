@@ -41,10 +41,10 @@ PROMPT_DICT = {
         "### Instruction:\n{instruction}\n\n### Response:"
     ),
     "no_prompt_input": (
-        "{instruction} # {input} $ "
+        "{instruction} # {input} $"
     ),
     "no_prompt": (
-        "{instruction} $ "
+        "{instruction} $"
     )
 }
 
@@ -66,6 +66,7 @@ class InstructionDataset(Dataset):
         self.swift_max_words = swift_max_words
         tokenizer = Tokenizer(model_path=model_path + "./tokenizer.model")
         self.tokenizer1 = tokenizer
+        self.swift_padding_token = 259
 
     def __len__(self):
         return len(self.ann)
@@ -104,7 +105,7 @@ class InstructionDataset(Dataset):
            swift_valid = torch.zeros(1).float()
         padding_swift = self.swift_max_words - swift_tokens.shape[0]
         if padding_swift > 0:
-            swift_tokens = torch.cat((swift_tokens, torch.zeros(padding_swift, dtype=torch.int64)))
+            swift_tokens = torch.cat((swift_tokens, torch.ones(padding_swift, dtype=torch.int64) * self.swift_padding_token))
         elif padding < 0:
             swift_tokens = swift_tokens[: self.swift_max_words]
 

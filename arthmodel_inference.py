@@ -94,7 +94,8 @@ def get_args_parser():
 
     # Model parameters
     parser.add_argument("--llama_model_path", default="/home/eteced/dl_workspace/model_repo.folder/llama_ord/", type=str, help="path of llama model")
-    parser.add_argument("--checkpoint", default="./checkpoint_final_202307142226/checkpoint-0.pth", type=str, help="path of llama model")
+    parser.add_argument("--checkpoint", default="./checkpoint/arth_model_128dim.pth", type=str, help="path of llama model")
+    #parser.add_argument("--checkpoint", default="./checkpoint_final_202307142226/checkpoint-0.pth", type=str, help="path of llama model")
     return parser
 
 def arthmodel_load(args, args_for_model : ArthModelArgs, tokenizer, **kwargs):
@@ -117,8 +118,8 @@ def test_arth_to_dense(args):
     default_arth_args.max_batch_size = 1
     default_arth_args.dim=128
     default_arth_args.max_seq_len=128
-    default_arth_args.output_steps = True
-    default_arth_args.debug_trace = True
+    default_arth_args.output_steps = False
+    default_arth_args.debug_trace = False
     default_arth_args.device="cuda"
     tokenizer = Tokenizer(model_path=args.llama_model_path + "/tokenizer.model")
     model = arthmodel_load(args, default_arth_args, tokenizer)
@@ -127,13 +128,13 @@ def test_arth_to_dense(args):
     # text_list=["90.12", "1.234", "567.9"]
     # text_list=["32716.022586 * 48959.059241 71809.071167 41330.026497 ^ 62365.021137 ^ * 27002.081354 + 88707.069639 / ^ 65903.013672"]
     # text_list=["24895.045487 * 59404.090586 ^ 39265.011407 87531.080102 82825.058262 57437.093692 + 26169.032728 50103.073226 ^ - *"]
-    text_list=["3 5 +"]
+    text_list=["0.8207 905980.60908 + 65.31 - 58.0 27.0 * 565768.81514 / - 495431.354828 825.66628 / 8242.644686 * 1930.3 / +"]
     model.eval()
     lst_tokens=[]
     for x in text_list:
-        # list_tokens=tokenizer.encode(x,bos=True,eos=True)
-        list_tokens = [1, 29871, 29941, 29889, 29945, 29871, 29906, 29889, 29955,   334,
-         29871, 29947, 29889, 29953,   718,     2]
+        list_tokens=tokenizer.encode(x,bos=True,eos=True)
+        # list_tokens = [1, 29871, 29941, 29889, 29945, 29871, 29906, 29889, 29955,   334,
+        #  29871, 29947, 29889, 29953,   718,     2]
         list_arth_tokens=transfer_token_ids(list_tokens, default_arth_args.dict_vocb_map)
         lst_tokens.append(list_arth_tokens)
     print("lst_tokens", lst_tokens)
@@ -142,21 +143,18 @@ def test_arth_to_dense(args):
     print("l_steps_op_pred", l_steps_op_pred)
     final_tokens = model(token_tensor, start_pos = 0, tokens_is_index=True)
     print("final_tokens: ", final_tokens)
-    # if default_arth_args.output_steps ==True:
-    #     trans_valid, trans_dense, trans_op, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = model(token_tensor, start_pos = 0, tokens_is_index=True)
-    #     print("trans_valid", trans_valid)
-    #     print("trans_dense", trans_dense)
-    #     print("steps_ignore_logits", steps_ignore_logits)
-    #     print("steps_tmp_moved_logits", steps_tmp_moved_logits)
-    #     print("steps_dense_op_logits", steps_dense_op_logits)
-    #     print("steps_dense_map_logits", steps_dense_map_logits)
-    #     print("steps_decimal_start_logits", steps_decimal_start_logits)
-    #     print("steps_op_pred", steps_op_pred)
-    # else:
-    #     trans_valid, trans_dense, trans_op = model(token_tensor, start_pos = 0)
-    #     print("trans_valid", trans_valid)
-    #     print("trans_dense", trans_dense)
-    #     print("trans_op", trans_op)
+    if default_arth_args.output_steps ==True:
+        arth_tokens, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = model(token_tensor, start_pos = 0, tokens_is_index=True)
+        print("arth_tokens", arth_tokens)
+        print("steps_ignore_logits", steps_ignore_logits)
+        print("steps_tmp_moved_logits", steps_tmp_moved_logits)
+        print("steps_dense_op_logits", steps_dense_op_logits)
+        print("steps_dense_map_logits", steps_dense_map_logits)
+        print("steps_decimal_start_logits", steps_decimal_start_logits)
+        print("steps_op_pred", steps_op_pred)
+    else:
+        arth_tokens = model(token_tensor, start_pos = 0, tokens_is_index=True)
+        print("arth_tokens", arth_tokens)
 
 def test_arth_calc(args):
     default_arth_args = ArthModelArgs()
