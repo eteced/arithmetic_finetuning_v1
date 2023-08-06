@@ -27,9 +27,6 @@ class ModelArgs:
 
     max_batch_size: int = 32
     max_seq_len: int = 2048
-    add_bias: bool = False
-    add_scale: bool = False
-    train_norm: bool = False
     arth_influence_layers: list = field(default_factory=lambda: [x for x in range(16, 32)])
     arth_math_layers: list = field(default_factory=lambda: [x for x in range(16, 24)])
     # arth_influence_layers: list = field(default_factory=lambda: [])
@@ -80,13 +77,6 @@ def apply_rotary_emb(
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
-def forward_linear_with_scale_and_bias(x, module, scale=None, bias=None):
-    if scale is not None:
-        x = x * scale
-    x = module(x)
-    if bias is not None:
-        x = x + bias
-    return x
 
 class Attention(nn.Module):
     def __init__(self, args: ModelArgs):
@@ -94,117 +84,58 @@ class Attention(nn.Module):
 
         self.n_local_heads = args.n_heads
         self.head_dim = args.dim // args.n_heads
-        self.dim = args.dim
 
-        self.wq = nn.Linear(
-            args.dim,
-            args.n_heads * self.head_dim,
-            bias=False
-        )
-        self.wk = nn.Linear(
-            args.dim,
-            args.n_heads * self.head_dim,
-            bias=False
-        )
-        self.wv = nn.Linear(
-            args.dim,
-            args.n_heads * self.head_dim,
-            bias=False
-        )
-        self.wo = nn.Linear(
-            args.n_heads * self.head_dim, args.dim, bias=False
-        )
+        self.wq = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
+        self.wk = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
+        self.wv = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
+        self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
 
-        self.gate = torch.nn.Parameter(torch.zeros(1, args.n_heads, 1, 1))
-
-        self.cache_enabled = False
-        self.cache_k, self.cache_v = None, None
-
-        if args.add_bias:
-            self.wq_bias, self.wk_bias, self.wv_bias = [
-                nn.Parameter(torch.zeros([self.n_local_heads * self.head_dim])) for _ in range(3)
-            ]
-            self.wo_bias = nn.Parameter(torch.zeros([args.dim]))
-        else:
-            self.wq_bias = self.wk_bias = self.wv_bias = self.wo_bias = None
-
-        if args.add_scale:
-            self.wq_scale, self.wk_scale, self.wv_scale = [nn.Parameter(torch.ones([args.dim])) for _ in range(3)]
-            self.wo_scale = nn.Parameter(torch.ones([self.n_local_heads * self.head_dim]))
-        else:
-            self.wq_scale = self.wk_scale = self.wv_scale = self.wo_scale = None
-
-    def enable_cache(self):
-        self.cache_enabled = True
-
-    def disable_cache(self):
-        self.cache_enabled = False
-        self.cache_k, self.cache_v = None, None
+        self.gate = torch.nn.Parameter(torch.zeros(1, self.n_local_heads, 1, 1))
 
     def forward(
         self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor], adapter=None
     ):
-        bsz, seqlen, _ = x.shape
-        xq = forward_linear_with_scale_and_bias(x, self.wq, self.wq_scale, self.wq_bias)
-        xk = forward_linear_with_scale_and_bias(x, self.wk, self.wk_scale, self.wk_bias)
-        xv = forward_linear_with_scale_and_bias(x, self.wv, self.wv_scale, self.wv_bias)
 
-        xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim) # B x seqlen x n_local_heads x head_dim; _ = n_local_heads * head_dim
-        xk = xk.view(bsz, seqlen, self.n_local_heads, self.head_dim) # B x seqlen x n_local_heads x head_dim
-        xv = xv.view(bsz, seqlen, self.n_local_heads, self.head_dim) # B x seqlen x n_local_heads x head_dim
+        bsz, seqlen, _ = x.shape
+        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+
+        xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
+        xk = xk.view(bsz, seqlen, self.n_local_heads, self.head_dim)
+        xv = xv.view(bsz, seqlen, self.n_local_heads, self.head_dim)
 
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
-        if adapter is not None: # adapter is global, same for all instances in a batch and all position
+        if adapter is not None:
             adapter_len = adapter.shape[1]
-            adapter_k = forward_linear_with_scale_and_bias(adapter, self.wk, self.wk_scale, self.wk_bias)
-            adapter_k = adapter_k.view(1, adapter_len, self.n_local_heads, self.head_dim).repeat(bsz, 1, 1, 1)
-            adapter_v = forward_linear_with_scale_and_bias(adapter, self.wv, self.wv_scale, self.wv_bias)
-            adapter_v = adapter_v.view(1, adapter_len, self.n_local_heads, self.head_dim).repeat(bsz, 1, 1, 1)
-            adapter_k = adapter_k.transpose(1, 2) # B x self.n_local_heads x adapter_len x self.head_dim
-            adapter_v = adapter_v.transpose(1, 2) # B x self.n_local_heads x adapter_len x self.head_dim
+            adapter_k = self.wk(adapter).view(1, adapter_len, self.n_local_heads, self.head_dim).repeat(bsz, 1, 1, 1)
+            adapter_v = self.wv(adapter).view(1, adapter_len, self.n_local_heads, self.head_dim).repeat(bsz, 1, 1, 1)
+            xk = torch.cat([adapter_k, xk], dim=1)
+            xv = torch.cat([adapter_v, xv], dim=1)
+            extra_mask = torch.zeros(1, 1, seqlen, adapter_len).to(mask)
+            mask = torch.cat([extra_mask, mask], dim=-1)
         keys = xk
         values = xv
 
-        xq = xq.transpose(1, 2) # B x n_local_heads x seqlen x head_dim
-        keys = keys.transpose(1, 2) # B x n_local_heads x seqlen x head_dim
-        values = values.transpose(1, 2) # B x n_local_heads x seqlen x head_dim
-
-        if self.cache_enabled:
-            if self.cache_k is None:
-                assert start_pos == 0
-                self.cache_k, self.cache_v = keys, values
-            else:
-                assert self.cache_k.size(2) >= start_pos
-                self.cache_k = torch.cat([self.cache_k[:, :, :start_pos], keys], dim=2)
-                self.cache_v = torch.cat([self.cache_v[:, :, :start_pos], values], dim=2)
-                keys, values = self.cache_k, self.cache_v
-
-        output = self._forward_scaled_dot_product_attention(xq, keys, values, mask) # （B x n_local_heads x seqlen x head_dim）
+        xq = xq.transpose(1, 2)
+        keys = keys.transpose(1, 2)
+        values = values.transpose(1, 2)
+        scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
+        if mask is not None:
+            scores = scores + mask  # (bs, n_local_heads, slen, cache_len + slen)
         if adapter is not None:
-            output += self.gate[
-                :,  : 
-            ].tanh().half() * self._forward_scaled_dot_product_attention(xq, adapter_k, adapter_v) # gate size is (? x self.n_local_heads), gate is also global, and init with torch.zeros(1, args.n_heads, 1, 1), note that adapter doesn't have mask
-        output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1) # trans back to (B x seqlen x args.dim)
-
-        return forward_linear_with_scale_and_bias(output, self.wo, self.wo_scale, self.wo_bias)
-
-    def _forward_scaled_dot_product_attention(self, q, k, v, mask=None):
-        if hasattr(F, "scaled_dot_product_attention") and False:
-            return F.scaled_dot_product_attention(q, k, v, mask >= 0 if mask is not None else None)
+            scores = torch.cat(
+                [
+                    self.gate.tanh().half() * F.softmax(scores[:, :, :, :adapter_len].float(), dim=-1).type_as(xq),
+                    F.softmax(scores[:, :, :, adapter_len:].float(), dim=-1).type_as(xq),
+                ],
+                dim=-1,
+            )
         else:
-            #（B x n_local_heads x seqlen x head_dim）X （B x n_local_heads x head_dim x seqlen）
-            # Adapter: （B x n_local_heads x seqlen x head_dim）X （B x n_local_heads x head_dim x adapter_len）
-            scores = torch.matmul(q, k.transpose(2, 3)) / math.sqrt(self.head_dim) # B x n_local_heas x seqlen x seqlen, Adapter: B x n_local_heads x seqlen x adapter_len
-            if mask is not None: # mask is None for adapter
-                scores = scores + mask
-            scores = F.softmax(scores.float(), dim=-1).type_as(q)
-            #（B x n_local_heads x seqlen x seqlen）X（B x n_local_heads x seqlen x head_dim）
-            #（B x n_local_heads x seqlen x head_dim）
-            # Adapter:（B x n_local_heads x seqlen x adapter_len） x （B x self.n_local_heads x adapter_len x self.head_dim）
-            # Adapter:（B x n_local_heads x seqlen x head_dim）
-            output = torch.matmul(scores, v)
-            return output
+            scores = F.softmax(scores.float(), dim=-1).type_as(xq)
+        output = torch.matmul(scores, values)  # (bs, n_local_heads, slen, head_dim)
+        output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
+
+        return self.wo(output)
 
 
 class FeedForward(nn.Module):
@@ -311,22 +242,17 @@ class Transformer(nn.Module):
 
         self.adapter_query = nn.Embedding(self.adapter_len * self.adapter_layer, params.dim)
         self.adapter_query_math = nn.Embedding(self.adapter_len * self.adapter_layer_math, params.dim)
-        self.use_math_std = True
 
     def argmax_onehot(self, logits):
         arg_a=torch.argmax(logits, dim=-1)
         return F.one_hot(arg_a, num_classes=logits.shape[-1])
 
-    def forward(self, tokens: torch.Tensor, example_mask: torch.Tensor, arth_tokens: torch.Tensor, start_pos = 0):
+    def forward(self, tokens: torch.Tensor, example_mask: torch.Tensor, start_pos = 0):
         _bsz, seqlen = tokens.shape
         if DEBUG_ENABLE:
             print('tokens', tokens)
             print('example_mask', example_mask)
-            print('arth_tokens', arth_tokens)
         h = self.tok_embeddings(tokens).detach().requires_grad_(False)
-        # h_math_std begin with a flag token (@ means enable arth_math, space means disable arth_math)
-        h_math_std = self.tok_embeddings(arth_tokens).detach().requires_grad_(False)
-        length_math_std = h_math_std.shape[1]
         arth_fill = self.tok_embeddings(torch.Tensor([self.arth_params.padding_token]).long().to(h.device))
         # h = self.tok_embeddings(tokens)
         arth_prefix_len = len(self.params.arth_extra_token_begin)
@@ -341,12 +267,9 @@ class Transformer(nn.Module):
         # use only the prompt to predict math interaction
         h_for_math = h * example_mask_tile
         non_ord_prompt_begin = torch.sum(example_mask, dim=-1).long()
-        if self.params.arth_extra_think_len > 0:
-            extra_padding = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.params.arth_extra_think_len, 1))
+        extra_padding = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.params.arth_extra_think_len, 1))
         for i in range(_bsz):
-            if self.params.arth_extra_think_len > 0:
-                h_for_math[i, non_ord_prompt_begin[i] : non_ord_prompt_begin[i] + self.params.arth_extra_think_len,: ] = extra_padding[i, : ,:]
-            h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len: non_ord_prompt_begin[i] + self.params.arth_extra_think_len + length_math_std, :] = h_math_std[i, :, :]
+            h_for_math[:, non_ord_prompt_begin[i] : non_ord_prompt_begin[i] + self.params.arth_extra_think_len,: ] = extra_padding[i, : ,:]
         # forward math part
         for layer_index in range(0, self.params.arth_insert_layer_after + 1):
             freqs_cis = self.freqs_cis.to(h.device)
@@ -381,10 +304,7 @@ class Transformer(nn.Module):
             arth_result_tokens = self.arth_block(h_for_arth.half(), start_pos=0)
         else:
             arth_result_tokens, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = self.arth_block(h_for_arth.half(), start_pos=0)
-        if self.use_math_std:
-            arth_result_tokens = torch.concat([arth_token_prefix, arth_tokens[:, 1:].to(h.device)], axis=-1)
-        else:
-            arth_result_tokens = torch.concat([arth_token_prefix, arth_result_tokens.to(h.device)], axis=-1)
+        arth_result_tokens = torch.concat([arth_token_prefix, arth_result_tokens.to(h.device)], axis=-1)
         if DEBUG_ENABLE:
             print(">>> arth_result_tokens", arth_result_tokens)
         # cut the tokens
@@ -439,129 +359,103 @@ class Transformer(nn.Module):
         _bsz, seqlen = tokens.shape
         if DEBUG_ENABLE:
             print('tokens', tokens)
-            print('example_mask', example_mask)
         h = self.tok_embeddings(tokens).detach().requires_grad_(False)
+        arth_fill = self.tok_embeddings(torch.Tensor([self.arth_params.padding_token]).long().to(h.device))
+        # h = self.tok_embeddings(tokens)
+        arth_prefix_len = len(self.params.arth_extra_token_begin)
+        arth_token_prefix = torch.tile(torch.Tensor(self.params.arth_extra_token_begin).long().view(1, -1), (_bsz, 1)).to(h.device)
+        h_ord = h
+        adapter_index = -1
+        math_adapter_index = -1
         adapter = self.adapter_query.weight.reshape(-1, self.adapter_len, self.params.dim).unsqueeze(1)
         math_adapter = self.adapter_query_math.weight.reshape(-1, self.adapter_len, self.params.dim).unsqueeze(1)
-        # only when start_pos == 0, we predict if goes math prompt inject or not.
-        # tokens should be input without padding
-        if start_pos == 0:
-            arth_fill = self.tok_embeddings(torch.Tensor([self.arth_params.padding_token]).long().to(h.device))
-            # h = self.tok_embeddings(tokens)
-            arth_prefix_len = len(self.params.arth_extra_token_begin)
-            arth_token_prefix = torch.tile(torch.Tensor(self.params.arth_extra_token_begin).long().view(1, -1), (_bsz, 1)).to(h.device)
-            h_ord = h
-            h_for_math = h
-            non_ord_prompt_begin = h.shape[1]
-            if self.params.arth_extra_think_len > 0:
-                extra_padding = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.params.arth_extra_think_len, 1))
-            if self.params.arth_extra_think_len > 0:
-                h_for_math = torch.cat([h_for_math, extra_padding], dim=1)
-            self.disable_cache()
-            self.enable_cache()
-            # forward math part
-            lst_h_gate_logits = []
-            lst_h_arth_logits = []
-            last_token_vec = None
-            for idx in range(0, self.arth_params.max_seq_len + 1):
-                math_adapter_index = -1
-                if idx == 0:
-                    for layer_index in range(0, self.params.arth_insert_layer_after + 1):
-                        freqs_cis = self.freqs_cis.to(h.device)
-                        freqs_cis = freqs_cis[:seqlen + self.params.arth_extra_think_len]
-                        mask = torch.full((1, 1, seqlen + self.params.arth_extra_think_len, seqlen + self.params.arth_extra_think_len), float("-inf"), device=h.device)
-                        mask = torch.triu(mask, diagonal=0 + 1).type_as(h_for_math)
-                        if layer_index not in self.params.arth_math_layers:
-                            with torch.no_grad():
-                                h_for_math = self.layers[layer_index](h_for_math, 0, freqs_cis, mask)
-                        else:
-                            math_adapter_index = math_adapter_index + 1
-                            h_for_math = self.layers[layer_index](h_for_math, 0, freqs_cis, mask, math_adapter[math_adapter_index].half())
-                    for i in range(_bsz):
-                        h_gate_logits = h_for_math[i, -1,:]
-                        lst_h_gate_logits.append(h_gate_logits)
-                    last_token_vec = h_for_math[:, -1, :].view(_bsz, 1, -1)
-                else:
-                    for layer_index in range(0, self.params.arth_insert_layer_after + 1):
-                        freqs_cis = self.freqs_cis.to(h.device)
-                        freqs_cis = freqs_cis[seqlen + self.params.arth_extra_think_len + idx : seqlen + self.params.arth_extra_think_len + idx + 1]
-                        mask = None
-                        if layer_index not in self.params.arth_math_layers:
-                            with torch.no_grad():
-                                h_math_one_token = self.layers[layer_index](last_token_vec, 0, freqs_cis, mask)
-                        else:
-                            math_adapter_index = math_adapter_index + 1
-                            h_math_one_token = self.layers[layer_index](last_token_vec, 0, freqs_cis, mask, math_adapter[math_adapter_index].half())
-                    lst_h_arth_logits.append(h_math_one_token)
-                    last_token_vec = h_math_one_token[:, -1, :].view(_bsz, 1, -1)
-            m_h_gate_logits = torch.stack(lst_h_gate_logits)
-            m_h_arth = torch.cat(lst_h_arth_logits, dim = 1)
-            # m_h_arth = self.norm(m_h_arth)
-            # now call arth math
-            h_for_arth = self.emb_transfer_nn(m_h_arth.float())
-            print("h_for_arth.shape", h_for_arth.shape)
-            h_gate_logits = self.arth_gate_nn(m_h_gate_logits.float())
-            h_gate_logits = self.norm_gate(h_gate_logits)  # also learns whether enable arth model
-            h_arth_output = self.output_arth(h_for_arth.half()) # for supervised reverse polish notation
-            if DEBUG_ENABLE:
-                print(">>> h_gate_logits", h_gate_logits)
-                print(">>> h_arth_output", torch.argmax(h_arth_output, dim=-1))
-            if self.arth_params.output_steps == False:
-                arth_result_tokens = self.arth_block(h_for_arth.half(), start_pos=0)
+        example_mask_tile = torch.tile(example_mask.view(-1, seqlen, 1), (1, 1, self.params.dim)).to(h)
+        ### use prompt inject ###
+        # use only the prompt to predict math interaction
+        h_for_math = h * example_mask_tile
+        non_ord_prompt_begin = torch.sum(example_mask, dim=-1).long()
+        extra_padding = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.params.arth_extra_think_len, 1))
+        for i in range(_bsz):
+            h_for_math[:, non_ord_prompt_begin[i] : non_ord_prompt_begin[i] + self.params.arth_extra_think_len,: ] = extra_padding[i, : ,:]
+        # forward math part
+        for layer_index in range(0, self.params.arth_insert_layer_after + 1):
+            freqs_cis = self.freqs_cis.to(h.device)
+            freqs_cis = freqs_cis[:seqlen]
+            mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=h.device)
+            mask = torch.triu(mask, diagonal=0 + 1).type_as(h_for_math)
+            if layer_index not in self.params.arth_math_layers:
+                with torch.no_grad():
+                    h_for_math = self.layers[layer_index](h_for_math, start_pos, freqs_cis, mask)
             else:
-                arth_result_tokens, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = self.arth_block(h_for_arth.half(), start_pos=0)
-            arth_result_tokens = torch.concat([arth_token_prefix, arth_result_tokens.to(h.device)], axis=-1)
-            if DEBUG_ENABLE:
-                print(">>> arth_result_tokens", arth_result_tokens)
-            # cut the tokens
-            arth_result_tokens = arth_result_tokens[:, : self.arth_params.max_seq_len]
-            extra_padding_arth_result = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.arth_params.max_seq_len, 1))
-            q_new = self.tok_embeddings(arth_result_tokens.to(self.arth_params.device))
-            q_update = self.argmax_onehot(h_gate_logits)[:, 1] # B
-            q_update_tile = torch.tile(q_update.view(-1, 1, 1), (1, self.arth_params.max_seq_len, self.params.dim)).to(h)
-            q_new_final = q_new * q_update_tile + (torch.ones_like(q_update_tile) - q_update_tile) * extra_padding_arth_result
-            adapter_index = -1
-            # clear cache for real answer generate
-            self.disable_cache()
-            self.enable_cache()
-            # inject prompt
-            h_new = torch.concat([h, q_new_final], dim=1)
-            q_update_t = torch.tile(q_update.view(-1, 1), (1, self.arth_params.max_seq_len))
-            mq_token = arth_result_tokens.to(h.device) * q_update_t.to(h.device)
-            if DEBUG_ENABLE:
-                print(">>> mq_token", mq_token)
-            h_new = h_new.to(h)
-            for layer_index in range(0, len(self.layers)):
-                freqs_cis_math = self.freqs_cis_math.to(h_new.device)
-                freqs_cis_math = freqs_cis_math[:seqlen + self.arth_params.max_seq_len]
-                # mask = None
-                mask_math = torch.full((1, 1, seqlen + self.arth_params.max_seq_len, seqlen + self.arth_params.max_seq_len), float("-inf"), device=h_new.device)
-                mask_math = torch.triu(mask_math, diagonal=0 + 1).type_as(h)
-                if layer_index not in self.params.arth_influence_layers:
-                    with torch.no_grad():
-                        h_new = self.layers[layer_index](h_new, start_pos, freqs_cis_math, mask_math)
-                else:
-                    adapter_index = adapter_index + 1
-                    h_new = self.layers[layer_index](h_new, start_pos, freqs_cis_math, mask_math, adapter[adapter_index].half())
-            del mask, freqs_cis, mask_math, freqs_cis_math
-            h = h_new
+                math_adapter_index = math_adapter_index + 1
+                h_for_math = self.layers[layer_index](h_for_math, start_pos, freqs_cis, mask, math_adapter[math_adapter_index].half())
+        lst_h_gate_logits = []
+        lst_h_arth = []
+        for i in range(_bsz):
+            h_gate_logits = h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len,:]
+            h_arth = h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1 : non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1 + self.arth_params.max_seq_len, :]
+            lst_h_gate_logits.append(h_gate_logits)
+            lst_h_arth.append(h_arth)
+        m_h_gate_logits = torch.stack(lst_h_gate_logits)
+        m_h_arth = torch.stack(lst_h_arth)
+        # now call arth math
+        h_for_arth = self.emb_transfer_nn(m_h_arth.float())
+        h_gate_logits = self.arth_gate_nn(m_h_gate_logits.float())
+        h_gate_logits = self.norm_gate(h_gate_logits)  # also learns whether enable arth model
+        h_arth_output = self.output_arth(h_for_arth.half()) # for supervised reverse polish notation
+        if DEBUG_ENABLE:
+            print(">>> h_gate_logits", h_gate_logits)
+            print(">>> h_arth_output", torch.argmax(h_arth_output, dim=-1))
+        if self.arth_params.output_steps == False:
+            arth_result_tokens = self.arth_block(h_for_arth.half(), start_pos=0)
         else:
-            adapter_index = -1
-            for layer_index in range(0, len(self.layers)):
-                freqs_cis_math = self.freqs_cis_math.to(h.device)
-                freqs_cis_math = freqs_cis_math[start_pos + self.arth_params.max_seq_len : start_pos + self.arth_params.max_seq_len + seqlen]
-                mask = None
-                if layer_index not in self.params.arth_influence_layers:
-                    with torch.no_grad():
-                        h = self.layers[layer_index](h, start_pos + self.arth_params.max_seq_len, freqs_cis_math, mask)
-                else:
-                    adapter_index = adapter_index + 1
-                    h = self.layers[layer_index](h, start_pos + self.arth_params.max_seq_len, freqs_cis_math, mask, adapter[adapter_index].half())
+            arth_result_tokens, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = self.arth_block(h_for_arth.half(), start_pos=0)
+        arth_result_tokens = torch.concat([arth_token_prefix, arth_result_tokens.to(h.device)], axis=-1)
+        if DEBUG_ENABLE:
+            print(">>> arth_result_tokens", arth_result_tokens)
+        # cut the tokens
+        arth_result_tokens = arth_result_tokens[:, : self.arth_params.max_seq_len]
+        extra_padding_arth_result = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.arth_params.max_seq_len, 1))
+        q_new = self.tok_embeddings(arth_result_tokens.to(self.arth_params.device))
+        q_update = self.argmax_onehot(h_gate_logits)[:, 1] # B
+        q_update_tile = torch.tile(q_update.view(-1, 1, 1), (1, self.arth_params.max_seq_len, self.params.dim)).to(h)
+        q_new_final = q_new * q_update_tile + (torch.ones_like(q_update_tile) - q_update_tile) * extra_padding_arth_result
+        # inject prompt
+        h_new = torch.zeros(_bsz, seqlen + self.arth_params.max_seq_len, self.params.dim)
+        q_update_t = torch.tile(q_update.view(-1, 1), (1, self.arth_params.max_seq_len))
+        mq_token = arth_result_tokens.to(h.device) * q_update_t.to(h.device)
+        max_q_index = torch.sum((mq_token != 0), axis=-1)
+        for i in range(_bsz):
+            h_new[i, :non_ord_prompt_begin[i], :] = h_ord[i, :non_ord_prompt_begin[i], :] # copy the ord token
+            mq_index = max_q_index[i].item()
+            if (mq_index > 0):
+                h_new[i, non_ord_prompt_begin[i]:non_ord_prompt_begin[i] + mq_index, :] = q_new_final[i, :mq_index, :] # copy the arth tokens
+            h_new[i, non_ord_prompt_begin[i] + mq_index : mq_index + seqlen, :] = h_ord[i, non_ord_prompt_begin[i]:, :] # copy the answers
+        h_new = h_new.to(h)
+        for layer_index in range(0, len(self.layers)):
+            freqs_cis_math = self.freqs_cis_math.to(h_new.device)
+            freqs_cis_math = freqs_cis_math[:seqlen + self.arth_params.max_seq_len]
+            # mask = None
+            mask_math = torch.full((1, 1, seqlen + self.arth_params.max_seq_len, seqlen + self.arth_params.max_seq_len), float("-inf"), device=h_new.device)
+            mask_math = torch.triu(mask_math, diagonal=0 + 1).type_as(h)
+            if layer_index not in self.params.arth_influence_layers:
+                with torch.no_grad():
+                    h_new = self.layers[layer_index](h_new, start_pos, freqs_cis_math, mask_math)
+            else:
+                adapter_index = adapter_index + 1
+                h_new = self.layers[layer_index](h_new, start_pos, freqs_cis_math, mask_math, adapter[adapter_index].half())
+        del mask, freqs_cis, mask_math, freqs_cis_math
+        h = h[:, :seqlen, :]
+        # should know that we have extra self.arth_params.max_seq_len dims before the label. we would like exclude it
+        for i in range(_bsz):
+            mq_index = max_q_index[i].item()
+            h[i, :non_ord_prompt_begin[i], :] = h_new[i, :non_ord_prompt_begin[i], :] # copy the ord token
+            h[i, non_ord_prompt_begin[i]:, :] = h_new[i, non_ord_prompt_begin[i] + mq_index: mq_index + seqlen, :] # copy the exclude arth token
         h = self.norm(h)
         if full_mode == True:
             output = self.output(h)
         else:
-            output = self.output(h[:, -1, :])
+            output = self.output(h[:, cur_pos, :])
         return output.float()
 
     def enable_cache(self):

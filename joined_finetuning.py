@@ -249,11 +249,11 @@ def joined_train_one_epoch(
 
         if output_steps:
             # print(model)
-            output, h_gate_logits, h_arth_output, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred, arth_result_tokens = model(examples, example_mask)
-            loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, swift_tokens, swift_valids, True, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred)
+            output, h_gate_logits, h_arth_output, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred, arth_result_tokens = model(examples, example_mask, swift_tokens)
+            loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids, True, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred)
         else:
-            output, h_gate_logits, h_arth_output = model(examples, example_mask)
-            loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, swift_tokens, swift_valids)
+            output, h_gate_logits, h_arth_output = model(examples, example_mask, swift_tokens)
+            loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids)
         loss_value = loss.item()
         loss_normal_value = loss_normal.item()
         loss_arth_gate_value = loss_arth_gate.item()
@@ -446,11 +446,12 @@ def joined_val_one_epoch(
         #      0,     0]).to(example_mask)
         with torch.no_grad():
             if output_steps:
-                output, h_gate_logits, h_arth_output, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred, arth_result_tokens = model(examples, example_mask)
-                loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, swift_tokens, swift_valids, True, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred)
+                # print(model)
+                output, h_gate_logits, h_arth_output, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred, arth_result_tokens = model(examples, example_mask, swift_tokens)
+                loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids, True, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred)
             else:
-                output, h_gate_logits, h_arth_output = model(examples, example_mask)
-                loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, swift_tokens, swift_valids)
+                output, h_gate_logits, h_arth_output = model(examples, example_mask, swift_tokens)
+                loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids)
         loss_value = loss.item()
         loss_normal_value = loss_normal.item()
         loss_arth_gate_value = loss_arth_gate.item()

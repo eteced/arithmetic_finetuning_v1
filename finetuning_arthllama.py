@@ -67,6 +67,8 @@ class InstructionDataset(Dataset):
         tokenizer = Tokenizer(model_path=model_path + "./tokenizer.model")
         self.tokenizer1 = tokenizer
         self.swift_padding_token = 259
+        self.swift_valid_token = 732
+        self.swift_invalid_token = 259
 
     def __len__(self):
         return len(self.ann)
@@ -98,10 +100,10 @@ class InstructionDataset(Dataset):
         prompt_mask = prompt_mask.float()
         swift_express = ann.get("swift_express", "")
         if swift_express != "":
-           swift_tokens = torch.tensor(self.tokenizer1.encode(swift_express, bos=False, eos=False), dtype=torch.int64)
+           swift_tokens = torch.tensor([self.swift_valid_token] + self.tokenizer1.encode(swift_express, bos=False, eos=False), dtype=torch.int64)
            swift_valid = torch.ones(1).float()
         else:
-           swift_tokens = torch.zeros(self.swift_max_words)
+           swift_tokens = torch.cat([torch.tensor([self.swift_invalid_token], dtype=torch.int64), torch.zeros(self.swift_max_words - 1, dtype=torch.int64)], dim=-1)
            swift_valid = torch.zeros(1).float()
         padding_swift = self.swift_max_words - swift_tokens.shape[0]
         if padding_swift > 0:

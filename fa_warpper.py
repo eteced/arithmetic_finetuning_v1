@@ -4,19 +4,19 @@ import string
 import time
 
 DATA_SPLIT_FLODER='./data_split/'
-DATA_SPLIT_NUM = 1456
+DATA_SPLIT_NUM = 1457
 TOTAL_EPOCH_ORIGIN = 4
 # CHECKPOINT_FOLDER='./checkpoint/'
 FINAL_CHECKPOINT='./checkpoint/'
 CHECKPOINT_FOLDER='/mnt/tmp/'
-CHECKPOINT_START_SPLIT_EPOCH=11
+CHECKPOINT_START_SPLIT_EPOCH=10
 EPOCH_BASE = 0
 # EVAL_APPEND = ' --eval True'
 REAL_SAVE_CHECKPOINT = 10
 EVAL_APPEND = ''
 
-os_cmd = "torchrun --nproc_per_node 1 finetuning_arthllama.py     --model Arth_Llama7B     --llama_model_path /home/eteced/dl_workspace/model_repo.folder/llama_ord/     --data_path {}     --arth_model_path ./checkpoint/     --max_seq_len 512     --batch_size 1     --epochs {}  --start_epoch {}  --warmup_epochs 2     --blr 9e-3     --weight_decay 0.02     --output_dir {} --device cuda --resume {} "
-os_cmd_nocheckpoint = "torchrun --nproc_per_node 1 finetuning_arthllama.py     --model Arth_Llama7B     --llama_model_path /home/eteced/dl_workspace/model_repo.folder/llama_ord/     --data_path {}     --arth_model_path ./checkpoint/     --max_seq_len 512     --batch_size 1     --epochs {}  --start_epoch {}  --warmup_epochs 2     --blr 9e-3     --weight_decay 0.02     --output_dir {} --device cuda"
+os_cmd = "torchrun --nproc_per_node 1 finetuning_arthllama.py     --model Arth_Llama7B     --llama_model_path /home/eteced/dl_workspace/model_repo.folder/llama_ord/     --data_path {}     --arth_model_path ./checkpoint/     --max_seq_len 512     --batch_size 1     --epochs {}  --start_epoch {}  --warmup_epochs 2     --blr 0.1     --weight_decay 0.02     --output_dir {} --device cuda --resume {} "
+os_cmd_nocheckpoint = "torchrun --nproc_per_node 1 finetuning_arthllama.py     --model Arth_Llama7B     --llama_model_path /home/eteced/dl_workspace/model_repo.folder/llama_ord/     --data_path {}     --arth_model_path ./checkpoint/     --max_seq_len 512     --batch_size 1     --epochs {}  --start_epoch {}  --warmup_epochs 2     --blr 0.1     --weight_decay 0.02     --output_dir {} --device cuda"
 
 ckpt_start = CHECKPOINT_START_SPLIT_EPOCH
 for i in range(DATA_SPLIT_NUM * TOTAL_EPOCH_ORIGIN):

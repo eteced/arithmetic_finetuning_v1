@@ -77,10 +77,12 @@ def rev_polish_notation(xx: list) -> list:
     return final_res
 
 def merge_alpaca_and_generate_data(alpace_file_path, out_data_folder, percentage=0.4, onefile_record_nums=360):
-    f1=open(alpace_file_path)
-    all_data = json.load(f1)
-    f1.close()
-    arth_data_num = int(percentage * len(all_data))
+    # f1=open(alpace_file_path)
+    # all_data = json.load(f1)
+    # f1.close()
+    # arth_data_num = int(percentage * len(all_data))
+    all_data=[]
+    arth_data_num = 15000
     generator = ArthDataGenerator()
     for i in range(arth_data_num):
         arth_express = generator.generate()
