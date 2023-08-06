@@ -107,7 +107,7 @@ def gen_manual_aux_info(text : torch.Tensor, batch_index=1):
         print("in_steps_op_pred", steps_op_pred)
     return steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred
 
-def loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, swift_tokens, swift_valids, enable_arthstep=False, steps_ignore_logits=None, steps_tmp_moved_logits=None, steps_dense_op_logits=None, steps_dense_map_logits=None, steps_decimal_start_logits=None, steps_op_pred=None):
+def loss_generate(output, h_gate_logits, h_arth_output, m_h_arth_output, labels, example_mask, swift_tokens, swift_valids, enable_arthstep=False, steps_ignore_logits=None, steps_tmp_moved_logits=None, steps_dense_op_logits=None, steps_dense_map_logits=None, steps_decimal_start_logits=None, steps_op_pred=None):
     normal_criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
     aux_criterion = torch.nn.CrossEntropyLoss() # c is always in dim 1
     
@@ -126,6 +126,7 @@ def loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, sw
     loss_arth_gate = torch.mean(aux_criterion(h_gate_logits, swift_valids.to(h_gate_logits.device)))
     # loss_normal = torch.tensor([0.0], requires_grad=True).to(loss_arth_gate)
     h_arth_output = h_arth_output.reshape(-1, h_arth_output.shape[2])
+    m_h_arth_output = m_h_arth_output.reshape(-1, m_h_arth_output.shape[2])
     swift_tokens_calc = swift_tokens.type(torch.LongTensor).flatten()
     if big_debug:
         print('h_arth_output.shape', h_arth_output.shape)
@@ -138,6 +139,7 @@ def loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, sw
         # all ignore labels will let normal_criterion produce nan
         # loss_arth_mid_result = torch.mean(normal_criterion(h_arth_output, swift_tokens_calc.to(h_arth_output.device)) * swift_valids.to(h_arth_output))  *  50
         loss_arth_mid_result = torch.mean(aux_criterion(h_arth_output, swift_tokens_calc.to(h_arth_output.device)) * swift_valids.to(h_arth_output))  *  50
+        loss_arth_mid_result += torch.mean(aux_criterion(m_h_arth_output, swift_tokens_calc.to(h_arth_output.device)) * swift_valids.to(h_arth_output))  *  50
     else:
         loss_arth_mid_result = torch.tensor([0.0], requires_grad=True).to(loss_arth_gate)
     if big_debug:
@@ -249,11 +251,11 @@ def joined_train_one_epoch(
 
         if output_steps:
             # print(model)
-            output, h_gate_logits, h_arth_output, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred, arth_result_tokens = model(examples, example_mask, swift_tokens)
-            loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids, True, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred)
+            output, h_gate_logits, h_arth_output, m_h_arth_output, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred, arth_result_tokens = model(examples, example_mask, swift_tokens)
+            loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, m_h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids, True, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred)
         else:
-            output, h_gate_logits, h_arth_output = model(examples, example_mask, swift_tokens)
-            loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids)
+            output, h_gate_logits, h_arth_output, m_h_arth_output = model(examples, example_mask, swift_tokens)
+            loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, m_h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids)
         loss_value = loss.item()
         loss_normal_value = loss_normal.item()
         loss_arth_gate_value = loss_arth_gate.item()
@@ -447,11 +449,11 @@ def joined_val_one_epoch(
         with torch.no_grad():
             if output_steps:
                 # print(model)
-                output, h_gate_logits, h_arth_output, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred, arth_result_tokens = model(examples, example_mask, swift_tokens)
-                loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids, True, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred)
+                output, h_gate_logits, h_arth_output, m_h_arth_output, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred, arth_result_tokens = model(examples, example_mask, swift_tokens)
+                loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, m_h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids, True, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred)
             else:
-                output, h_gate_logits, h_arth_output = model(examples, example_mask, swift_tokens)
-                loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids)
+                output, h_gate_logits, h_arth_output, m_h_arth_output = model(examples, example_mask, swift_tokens)
+                loss, loss_normal, loss_arth_gate, loss_arth_mid_result = loss_generate(output, h_gate_logits, h_arth_output, m_h_arth_output, labels, example_mask, torch.cat([swift_tokens[:, 1:], torch.zeros(swift_tokens.shape[0], 1)], dim=-1), swift_valids)
         loss_value = loss.item()
         loss_normal_value = loss_normal.item()
         loss_arth_gate_value = loss_arth_gate.item()
