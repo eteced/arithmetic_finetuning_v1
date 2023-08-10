@@ -145,7 +145,7 @@ class LLaMA:
         tokens[:, max_start_pos] = next_token
         prev_pos = max_start_pos
         for cur_pos in range(max_start_pos + 1, total_len):
-            print(" >> inference...", cur_pos, " / ", total_len)
+            # print(" >> inference...", cur_pos, " / ", total_len)
             if DEBUG_MODE:
                 print('in_one, token: ', tokens[:, prev_pos:cur_pos])
             logits = self.model.forward_inference(tokens[:, prev_pos:cur_pos], torch.ones_like(tokens[:, prev_pos:cur_pos]), prev_pos, cur_pos - 1, full_mode=False)[0]

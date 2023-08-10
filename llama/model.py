@@ -510,7 +510,8 @@ class Transformer(nn.Module):
                         print("h_for_math_output: ", torch.argmax(h_for_math_output, dim=-1).long())
                 else:
                     last_token_vec = self.tok_embeddings(last_token_id).detach().requires_grad_(False)
-                    print("last_token_vec.shape", last_token_vec.shape)
+                    if DEBUG_ENABLE:
+                        print("last_token_vec.shape", last_token_vec.shape)
                     h_math_one_token = last_token_vec
                     for layer_index in range(0, self.params.arth_insert_layer_after + 1):
                         freqs_cis = self.freqs_cis.to(h.device)
