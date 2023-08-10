@@ -176,6 +176,11 @@ class Attention(nn.Module):
                 self.cache_k, self.cache_v = keys, values
             else:
                 assert self.cache_k.size(2) >= start_pos
+                if DEBUG_ENABLE:
+                    print("self.cache_k.shape", self.cache_k.shape)
+                    print("self.cache_v.shape", self.cache_v.shape)
+                    print("keys.shape", keys.shape)
+                    print("values.shape", values.shape)
                 self.cache_k = torch.cat([self.cache_k[:, :, :start_pos], keys], dim=2)
                 self.cache_v = torch.cat([self.cache_v[:, :, :start_pos], values], dim=2)
                 keys, values = self.cache_k, self.cache_v
@@ -311,7 +316,6 @@ class Transformer(nn.Module):
 
         self.adapter_query = nn.Embedding(self.adapter_len * self.adapter_layer, params.dim)
         self.adapter_query_math = nn.Embedding(self.adapter_len * self.adapter_layer_math, params.dim)
-        self.use_math_std = True
 
     def argmax_onehot(self, logits):
         arg_a=torch.argmax(logits, dim=-1)
@@ -323,6 +327,7 @@ class Transformer(nn.Module):
             print('tokens', tokens)
             print('example_mask', example_mask)
             print('arth_tokens', arth_tokens)
+            print('tokens * example_mask', (tokens * example_mask).long())
         h = self.tok_embeddings(tokens).detach().requires_grad_(False)
         # h_math_std begin with a flag token (@ means enable arth_math, space means disable arth_math)
         h_math_std = self.tok_embeddings(arth_tokens).detach().requires_grad_(False)
@@ -341,12 +346,16 @@ class Transformer(nn.Module):
         # use only the prompt to predict math interaction
         h_for_math = h * example_mask_tile
         non_ord_prompt_begin = torch.sum(example_mask, dim=-1).long()
+        non_ord_prompt_begin_pred = non_ord_prompt_begin - torch.ones_like(non_ord_prompt_begin)
         if self.params.arth_extra_think_len > 0:
             extra_padding = torch.tile(arth_fill.view(1, 1, -1), (_bsz, self.params.arth_extra_think_len, 1))
         for i in range(_bsz):
             if self.params.arth_extra_think_len > 0:
                 h_for_math[i, non_ord_prompt_begin[i] : non_ord_prompt_begin[i] + self.params.arth_extra_think_len,: ] = extra_padding[i, : ,:]
-            h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len: non_ord_prompt_begin[i] + self.params.arth_extra_think_len + length_math_std, :] = h_math_std[i, :, :]
+            # h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len: non_ord_prompt_begin[i] + self.params.arth_extra_think_len + length_math_std, :] = h_math_std[i, :, :]
+            h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len: non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1, :] = h_math_std[i, :1, :]
+            if DEBUG_ENABLE:
+                print("i:", i, "std_math idx:", non_ord_prompt_begin[i] + self.params.arth_extra_think_len)
         # forward math part
         for layer_index in range(0, self.params.arth_insert_layer_after + 1):
             freqs_cis = self.freqs_cis.to(h.device)
@@ -359,16 +368,25 @@ class Transformer(nn.Module):
             else:
                 math_adapter_index = math_adapter_index + 1
                 h_for_math = self.layers[layer_index](h_for_math, start_pos, freqs_cis, mask, math_adapter[math_adapter_index].half())
+        h_for_math_output = self.output(self.norm(h_for_math))
+        if DEBUG_ENABLE:
+            print(">>> h_for_math_output", torch.argmax(h_for_math_output, dim=-1))
         lst_h_gate_logits = []
         lst_h_arth = []
         for i in range(_bsz):
-            h_gate_logits = h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len,:]
-            h_arth = h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1 : non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1 + self.arth_params.max_seq_len, :]
+            # the answer should have one pos shift!!
+            h_gate_logits = h_for_math[i, non_ord_prompt_begin_pred[i] + self.params.arth_extra_think_len,:]
+            if DEBUG_ENABLE:
+                print("i:", i, "h_gate_logits idx:", non_ord_prompt_begin_pred[i] + self.params.arth_extra_think_len)
+            h_arth = h_for_math[i, non_ord_prompt_begin_pred[i] + self.params.arth_extra_think_len : non_ord_prompt_begin_pred[i] + self.params.arth_extra_think_len + self.arth_params.max_seq_len, :]
+            if DEBUG_ENABLE:
+                print("i:", i, "h_arth idx:", non_ord_prompt_begin_pred[i] + self.params.arth_extra_think_len)
             lst_h_gate_logits.append(h_gate_logits)
             lst_h_arth.append(h_arth)
         m_h_gate_logits = torch.stack(lst_h_gate_logits)
         m_h_arth = torch.stack(lst_h_arth)
         m_h_arth_output = self.output(self.norm(m_h_arth))
+        m_h_gate_output = self.output(self.norm(m_h_gate_logits))
         # m_h_arth = self.norm(m_h_arth)
         # now call arth math
         h_for_arth = self.emb_transfer_nn(m_h_arth.float())
@@ -378,14 +396,13 @@ class Transformer(nn.Module):
         if DEBUG_ENABLE:
             print(">>> h_gate_logits", h_gate_logits)
             print(">>> h_arth_output", torch.argmax(h_arth_output, dim=-1))
+            print(">>> m_h_arth_output", torch.argmax(m_h_arth_output, dim=-1))
+            print(">>> m_h_gate_output", torch.argmax(m_h_gate_output, dim=-1))
         if self.arth_params.output_steps == False:
             arth_result_tokens = self.arth_block(h_for_arth.half(), start_pos=0)
         else:
             arth_result_tokens, steps_ignore_logits, steps_tmp_moved_logits, steps_dense_op_logits, steps_dense_map_logits, steps_decimal_start_logits, steps_op_pred = self.arth_block(h_for_arth.half(), start_pos=0)
-        if self.use_math_std:
-            arth_result_tokens = torch.concat([arth_token_prefix, arth_tokens[:, 1:].to(h.device)], axis=-1)
-        else:
-            arth_result_tokens = torch.concat([arth_token_prefix, arth_result_tokens.to(h.device)], axis=-1)
+        arth_result_tokens = torch.concat([arth_token_prefix, arth_result_tokens.to(h.device)], axis=-1)
         if DEBUG_ENABLE:
             print(">>> arth_result_tokens", arth_result_tokens)
         # cut the tokens
@@ -441,6 +458,7 @@ class Transformer(nn.Module):
         if DEBUG_ENABLE:
             print('tokens', tokens)
             print('example_mask', example_mask)
+            print('tokens * example_mask', (tokens * example_mask).long())
         h = self.tok_embeddings(tokens).detach().requires_grad_(False)
         adapter = self.adapter_query.weight.reshape(-1, self.adapter_len, self.params.dim).unsqueeze(1)
         math_adapter = self.adapter_query_math.weight.reshape(-1, self.adapter_len, self.params.dim).unsqueeze(1)
@@ -482,30 +500,43 @@ class Transformer(nn.Module):
                     for i in range(_bsz):
                         h_gate_logits = h_for_math[i, -1,:]
                         lst_h_gate_logits.append(h_gate_logits)
-                    last_token_vec = h_for_math[:, -1, :].view(_bsz, 1, -1)
+                    h_for_math_output = self.output(self.norm(h_for_math))
+                    last_token_vec = h_for_math_output[:, -1, :].view(_bsz, 1, -1)
                     last_token_id = torch.argmax(last_token_vec, dim=-1).long()
+                    if DEBUG_ENABLE:
+                        print("rl gate begin idx: ", seqlen + self.params.arth_extra_think_len - 1)
+                        print("h_for_math shape[1]: ", h_for_math.shape[1])
+                        print("last_token_id: ", last_token_id)
+                        print("h_for_math_output: ", torch.argmax(h_for_math_output, dim=-1).long())
                 else:
                     last_token_vec = self.tok_embeddings(last_token_id).detach().requires_grad_(False)
+                    print("last_token_vec.shape", last_token_vec.shape)
+                    h_math_one_token = last_token_vec
                     for layer_index in range(0, self.params.arth_insert_layer_after + 1):
                         freqs_cis = self.freqs_cis.to(h.device)
-                        freqs_cis = freqs_cis[seqlen + self.params.arth_extra_think_len + idx : seqlen + self.params.arth_extra_think_len + idx + 1]
+                        freqs_cis = freqs_cis[seqlen + self.params.arth_extra_think_len + idx - 1: seqlen + self.params.arth_extra_think_len + idx]
+                        if DEBUG_ENABLE:
+                            print("freqs_cis_start:", seqlen + self.params.arth_extra_think_len + idx - 1, "freqs_cis_end:", seqlen + self.params.arth_extra_think_len + idx)
                         mask = None
                         if layer_index not in self.params.arth_math_layers:
                             with torch.no_grad():
-                                h_math_one_token = self.layers[layer_index](last_token_vec, 0, freqs_cis, mask)
+                                h_math_one_token = self.layers[layer_index](h_math_one_token, seqlen + self.params.arth_extra_think_len + idx - 1, freqs_cis, mask)
                         else:
                             math_adapter_index = math_adapter_index + 1
-                            h_math_one_token = self.layers[layer_index](last_token_vec, 0, freqs_cis, mask, math_adapter[math_adapter_index].half())
+                            h_math_one_token = self.layers[layer_index](h_math_one_token, seqlen + self.params.arth_extra_think_len + idx - 1, freqs_cis, mask, math_adapter[math_adapter_index].half())
                     lst_h_arth_logits.append(h_math_one_token)
-                    last_token_vec = h_math_one_token[:, -1, :].view(_bsz, 1, -1)
+                    last_token_vec = self.output(self.norm(h_math_one_token))
                     last_token_id = torch.argmax(last_token_vec, dim=-1).long()
+                if DEBUG_ENABLE:
+                    print("idx ", idx, "last_token_id:", last_token_id)
             m_h_gate_logits = torch.stack(lst_h_gate_logits)
             m_h_arth = torch.cat(lst_h_arth_logits, dim = 1)
             m_h_arth_output = self.output(self.norm(m_h_arth))
             # m_h_arth = self.norm(m_h_arth)
             # now call arth math
             h_for_arth = self.emb_transfer_nn(m_h_arth.float())
-            print("h_for_arth.shape", h_for_arth.shape)
+            if DEBUG_ENABLE:
+                print("h_for_arth.shape", h_for_arth.shape)
             h_gate_logits = self.arth_gate_nn(m_h_gate_logits.float())
             h_gate_logits = self.norm_gate(h_gate_logits)  # also learns whether enable arth model
             h_arth_output = self.output_arth(h_for_arth.half()) # for supervised reverse polish notation
@@ -556,7 +587,7 @@ class Transformer(nn.Module):
             adapter_index = -1
             for layer_index in range(0, len(self.layers)):
                 freqs_cis_math = self.freqs_cis_math.to(h.device)
-                freqs_cis_math = freqs_cis_math[start_pos + self.arth_params.max_seq_len : start_pos + self.arth_params.max_seq_len + seqlen]
+                freqs_cis_math = freqs_cis_math[start_pos + self.arth_params.max_seq_len - 1 : start_pos + self.arth_params.max_seq_len + seqlen - 1]
                 mask = None
                 if layer_index not in self.params.arth_influence_layers:
                     with torch.no_grad():

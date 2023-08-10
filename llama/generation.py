@@ -121,14 +121,15 @@ class LLaMA:
         for k, t in enumerate(prompt_tokens):
             tokens[k, : len(t)] = torch.tensor(t).long()
         input_text_mask = tokens != pad_id
+        input_text_mask = input_text_mask.float()
         input_prompt_len = torch.sum(input_text_mask, dim=-1)
-        max_start_pos = torch.max(input_prompt_len)
+        max_start_pos = torch.max(input_prompt_len).long()
         start_pos = min_prompt_size
         prev_pos = 0
         if DEBUG_MODE:
             print('in_full', tokens)
         # full_mode first
-        logits = self.model.forward_inference(tokens, input_text_mask, 0, 0, full_mode=False)
+        logits = self.model.forward_inference(tokens[:, :max_start_pos], input_text_mask[:, :max_start_pos], 0, 0, full_mode=False)
         if DEBUG_MODE:
             print('logits.shape', logits.shape)
         if temperature > 0:
@@ -147,7 +148,7 @@ class LLaMA:
             print(" >> inference...", cur_pos, " / ", total_len)
             if DEBUG_MODE:
                 print('in_one, token: ', tokens[:, prev_pos:cur_pos])
-            logits = self.model.forward_inference(tokens[:, prev_pos:cur_pos], input_text_mask, prev_pos, cur_pos - 1, full_mode=False)[0]
+            logits = self.model.forward_inference(tokens[:, prev_pos:cur_pos], torch.ones_like(tokens[:, prev_pos:cur_pos]), prev_pos, cur_pos - 1, full_mode=False)[0]
             if DEBUG_MODE:
                 print('logits.shape', logits.shape)
             if temperature > 0:
