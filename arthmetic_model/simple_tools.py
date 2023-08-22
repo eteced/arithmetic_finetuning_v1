@@ -17,18 +17,23 @@ import json
 class ArthDataGenerator:
     def __init__(self) -> None:
         self.ops = ['+','-','*','/']
-        self.max_decimal_len = 6
-        self.max_integer_len = 6
-        self.max_length = 120
-        self.min_length = 30
+        self.max_decimal_len = 2
+        self.max_integer_len = 2
+        self.max_length = 60
+        self.min_length = 12
         self.joined_char = ' '
-        self.max_op_occur = 20
+        self.max_op_occur = 10
+        self.high_op_in_mid_ratio = 0.5
+        self.high_op_start = 2
+
     def generate(self) -> list:
         list_ret=[]
         total_len_now = 0
         now_op = 0
         op_occur = 0
+        last_op = -1
         length = random.randint(self.min_length, self.max_length)
+        rand_op_in_mid = random.random()
         while total_len_now < length:
             if now_op == 0:
                 int_part_size = random.randint(0, self.max_integer_len)
@@ -36,7 +41,10 @@ class ArthDataGenerator:
                 dec_part_size = random.randint(0, self.max_decimal_len)
                 dec_div = 10 ** dec_part_size
                 dec_part = int(random.random() * dec_div) / dec_div
-                num_final = int_part + dec_part
+                if dec_part_size == 0:
+                    num_final = int_part
+                else:
+                    num_final = int_part + dec_part
                 if (num_final < 1e-6): # prevent div zero
                     num_final = 0.1
                 list_ret.append(str(num_final))
@@ -47,7 +55,17 @@ class ArthDataGenerator:
                     break
                 now_op = 1
             else:
-                op_next = random.randint(0, len(self.ops) - 1)
+                if rand_op_in_mid < self.high_op_in_mid_ratio:
+                    if last_op < 0:
+                        op_next = random.randint(0, len(self.ops) - 1)
+                    else:
+                        if last_op >= self.high_op_start:
+                            op_next = random.randint(0, self.high_op_start - 1)
+                        else:
+                            op_next = random.randint(self.high_op_start, len(self.ops) - 1)
+                else:
+                    op_next = random.randint(0, len(self.ops) - 1)
+                last_op = op_next
                 list_ret.append(self.ops[op_next])
                 total_len_now += len(list_ret[-1]) + 1
                 op_occur += 1
@@ -82,7 +100,7 @@ def merge_alpaca_and_generate_data(alpace_file_path, out_data_folder, percentage
     # f1.close()
     # arth_data_num = int(percentage * len(all_data))
     all_data=[]
-    arth_data_num = 15000
+    arth_data_num = 72850
     generator = ArthDataGenerator()
     for i in range(arth_data_num):
         arth_express = generator.generate()

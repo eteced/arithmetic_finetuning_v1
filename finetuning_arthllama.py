@@ -29,6 +29,8 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
 from llama import Tokenizer
 
+VAL_CHECK_ONLY = False
+
 PROMPT_DICT = {
     "prompt_input": (
         "Below is an instruction that describes a task, paired with an input that provides further context. "
@@ -79,9 +81,10 @@ class InstructionDataset(Dataset):
             prompt = PROMPT_DICT["no_prompt"].format_map(ann)
         else:
             prompt = PROMPT_DICT["no_prompt_input"].format_map(ann)
-        example = prompt + ann["output"]
+        answer = ann["output"]
         prompt = torch.tensor(self.tokenizer1.encode(prompt, bos=True, eos=False), dtype=torch.int64)
-        example = torch.tensor(self.tokenizer1.encode(example, bos=True, eos=True), dtype=torch.int64)
+        answer = torch.tensor(self.tokenizer1.encode(answer, bos=True, eos=True), dtype=torch.int64)
+        example = torch.cat([prompt, answer])
         padding = self.max_words - example.shape[0]
         if padding > 0:
             example = torch.cat((example, torch.zeros(padding, dtype=torch.int64) - 1))
@@ -288,35 +291,37 @@ def main(args):
             data_loader_train.sampler.set_epoch(epoch)
             data_loader_val.sampler.set_epoch(epoch)
 
-        train_stats = joined_train_one_epoch(
-            model, data_loader_train, optimizer, device, epoch, loss_scaler, log_writer=log_writer, args=args
-        )
+        if not VAL_CHECK_ONLY:
+            train_stats = joined_train_one_epoch(
+                model, data_loader_train, optimizer, device, epoch, loss_scaler, log_writer=log_writer, args=args
+            )
 
         val_stats = joined_val_one_epoch(
             model, data_loader_val, optimizer, device, epoch, loss_scaler, log_writer=log_writer, args=args
         )
 
-        if args.output_dir:
-            misc.save_model(
-                args=args,
-                model=model,
-                model_without_ddp=model_without_ddp,
-                optimizer=optimizer,
-                loss_scaler=loss_scaler,
-                epoch=epoch,
-            )
+        if not VAL_CHECK_ONLY:
+            if args.output_dir:
+                misc.save_model(
+                    args=args,
+                    model=model,
+                    model_without_ddp=model_without_ddp,
+                    optimizer=optimizer,
+                    loss_scaler=loss_scaler,
+                    epoch=epoch,
+                )
 
-        log_stats = {
-            **{f"train_{k}": v for k, v in train_stats.items()},
-            "epoch": epoch,
-            **{f"val_{k}": v for k, v in val_stats.items()},
-        }
+            log_stats = {
+                **{f"train_{k}": v for k, v in train_stats.items()},
+                "epoch": epoch,
+                **{f"val_{k}": v for k, v in val_stats.items()},
+            }
 
-        if args.output_dir and misc.is_main_process():
-            if log_writer is not None:
-                log_writer.flush()
-            with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
-                f.write(json.dumps(log_stats) + "\n")
+            if args.output_dir and misc.is_main_process():
+                if log_writer is not None:
+                    log_writer.flush()
+                with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
+                    f.write(json.dumps(log_stats) + "\n")
         
         # because of some unknowned gpu memory leak, i have to train one epoch (with size < 460) then quit and restart
         # however, a running wrapper will be provided to automatically continue training

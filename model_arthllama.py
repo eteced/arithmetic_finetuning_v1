@@ -43,11 +43,12 @@ def Arth_Llama7B(args, **kwargs):
     arth_llama_7b = Transformer(model_args, arth_params, tokenizer)
     torch.set_default_tensor_type(torch.FloatTensor)
     arth_llama_7b.load_state_dict(checkpoint, strict=False)
-    checkpoint_arth = torch.load(arth_model_path + '/arth_model_128dim.pth', map_location="cpu")
-    arth_llama_7b.arth_block.arth_model_frozen.load_state_dict(checkpoint_arth, strict=False)
+    # checkpoint_arth = torch.load(arth_model_path + '/arth_model_128dim.pth', map_location="cpu")
+    # arth_llama_7b.arth_block.arth_model_frozen.load_state_dict(checkpoint_arth, strict=False)
 
     for name, param in arth_llama_7b.named_parameters():
         if "adapter" not in name and 'emb_transfer_nn' not in name and 'arth_gate_nn' not in name:
+        # if "adapter" not in name:
             param.requires_grad = False
         else:
             param.requires_grad = True
@@ -56,7 +57,8 @@ def Arth_Llama7B(args, **kwargs):
     
 
     for name, param in arth_llama_7b.layers.named_parameters():
-        if "arth_block" not in name and ("gate" in name or "adapter" in name):
+        # if "arth_block" not in name and ("gate" in name or "adapter" in name):
+        if ("gate" in name or "adapter" in name) or ("arth_block" in name):
             param.data = param.data.float()
             param.requires_grad = True
             print("requires_grad, name: ", name)

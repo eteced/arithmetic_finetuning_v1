@@ -17,6 +17,9 @@ output_steps = True
 big_debug = False
 VAL_DEBUG = False
 TRAINING_DEBUG = False
+AUXLLM_ONLY_TRAINING = False
+AUXLLM_POSTFIX_ONLY_TRAINING = False
+AUXLLM_ARTH_ONLY_TRAINING = False
 
 def gen_manual_aux_info(text : torch.Tensor, batch_index=1):
     steps_ignore_logits=[]
@@ -116,7 +119,8 @@ def loss_generate(output, h_gate_logits, h_arth_output, m_h_arth_output, labels,
     if big_debug:
         print('output.shape', output.shape)
         print('labels.shape', labels)
-    loss_normal = torch.mean(normal_criterion(output, labels)) *  10
+    if not AUXLLM_ONLY_TRAINING:
+        loss_normal = torch.mean(normal_criterion(output, labels)) *  10
     swift_valids = swift_valids.type(torch.LongTensor).flatten()
     if big_debug:
         print('h_gate_logits.shape', h_gate_logits.shape)
@@ -124,7 +128,8 @@ def loss_generate(output, h_gate_logits, h_arth_output, m_h_arth_output, labels,
         print('h_gate_logits', h_gate_logits)
         print('swift_valids', swift_valids)
     loss_arth_gate = torch.mean(aux_criterion(h_gate_logits, swift_valids.to(h_gate_logits.device)))
-    # loss_normal = torch.tensor([0.0], requires_grad=True).to(loss_arth_gate)
+    if AUXLLM_ONLY_TRAINING:
+        loss_normal = torch.tensor([0.0], requires_grad=True).to(loss_arth_gate)
     h_arth_output = h_arth_output.reshape(-1, h_arth_output.shape[2])
     m_h_arth_output = m_h_arth_output.reshape(-1, m_h_arth_output.shape[2])
     swift_tokens_calc = swift_tokens.type(torch.LongTensor).flatten()
@@ -205,8 +210,10 @@ def loss_generate(output, h_gate_logits, h_arth_output, m_h_arth_output, labels,
         loss_arthstep = loss_steps_ignore_logits * 5 + loss_steps_tmp_moved_logits + loss_steps_dense_op_logits + loss_steps_dense_map_logits + loss_steps_steps_decimal_start_logits * 5 + loss_steps_steps_op_pred
         if big_debug:
             print("loss_normal", loss_normal, "loss_arth_gate", loss_arth_gate, "loss_arthstep", loss_arthstep, "loss_steps_ignore_logits", loss_steps_ignore_logits, "loss_steps_tmp_moved_logits", loss_steps_tmp_moved_logits, "loss_steps_dense_op_logits", loss_steps_dense_op_logits, "loss_steps_dense_map_logits", loss_steps_dense_map_logits, "loss_steps_steps_decimal_start_logits", loss_steps_steps_decimal_start_logits, "loss_steps_steps_op_pred", loss_steps_steps_op_pred)
-        loss_arth_mid_result = loss_arth_mid_result + loss_arthstep
-        # loss_arth_mid_result = loss_arthstep
+        if not AUXLLM_POSTFIX_ONLY_TRAINING:
+            loss_arth_mid_result = loss_arth_mid_result + loss_arthstep
+        elif AUXLLM_ARTH_ONLY_TRAINING:
+            loss_arth_mid_result = loss_arthstep
     if big_debug:
         print("loss_normal", loss_normal, "loss_arth_gate", loss_arth_gate, "loss_arth_mid_result", loss_arth_mid_result)
     loss = loss_normal + loss_arth_gate + loss_arth_mid_result

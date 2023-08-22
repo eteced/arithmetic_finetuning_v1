@@ -176,11 +176,11 @@ class Attention(nn.Module):
                 self.cache_k, self.cache_v = keys, values
             else:
                 assert self.cache_k.size(2) >= start_pos
-                if DEBUG_ENABLE:
-                    print("self.cache_k.shape", self.cache_k.shape)
-                    print("self.cache_v.shape", self.cache_v.shape)
-                    print("keys.shape", keys.shape)
-                    print("values.shape", values.shape)
+                # if DEBUG_ENABLE:
+                #     print("self.cache_k.shape", self.cache_k.shape)
+                #     print("self.cache_v.shape", self.cache_v.shape)
+                #     print("keys.shape", keys.shape)
+                #     print("values.shape", values.shape)
                 self.cache_k = torch.cat([self.cache_k[:, :, :start_pos], keys], dim=2)
                 self.cache_v = torch.cat([self.cache_v[:, :, :start_pos], values], dim=2)
                 keys, values = self.cache_k, self.cache_v
@@ -316,6 +316,7 @@ class Transformer(nn.Module):
 
         self.adapter_query = nn.Embedding(self.adapter_len * self.adapter_layer, params.dim)
         self.adapter_query_math = nn.Embedding(self.adapter_len * self.adapter_layer_math, params.dim)
+        self.training_use_std_math = False
 
     def argmax_onehot(self, logits):
         arg_a=torch.argmax(logits, dim=-1)
@@ -352,8 +353,9 @@ class Transformer(nn.Module):
         for i in range(_bsz):
             if self.params.arth_extra_think_len > 0:
                 h_for_math[i, non_ord_prompt_begin[i] : non_ord_prompt_begin[i] + self.params.arth_extra_think_len,: ] = extra_padding[i, : ,:]
-            # h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len: non_ord_prompt_begin[i] + self.params.arth_extra_think_len + length_math_std, :] = h_math_std[i, :, :]
-            h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len: non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1, :] = h_math_std[i, :1, :]
+            h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len: non_ord_prompt_begin[i] + self.params.arth_extra_think_len + length_math_std, :] = h_math_std[i, :, :]
+            # DEBUG!!!
+            # h_for_math[i, non_ord_prompt_begin[i] + self.params.arth_extra_think_len: non_ord_prompt_begin[i] + self.params.arth_extra_think_len + 1, :] = h_math_std[i, :1, :]
             if DEBUG_ENABLE:
                 print("i:", i, "std_math idx:", non_ord_prompt_begin[i] + self.params.arth_extra_think_len)
         # forward math part
@@ -389,10 +391,23 @@ class Transformer(nn.Module):
         m_h_gate_output = self.output(self.norm(m_h_gate_logits))
         # m_h_arth = self.norm(m_h_arth)
         # now call arth math
+
+        # h_for_arth = self.emb_transfer_nn(m_h_arth.float())
         h_for_arth = self.emb_transfer_nn(m_h_arth.float())
+        
+        # h_for_arth = self.emb_transfer_nn(torch.cat([m_h_arth[:, 1:, :], torch.tile(arth_fill.view(1, 1, -1), (_bsz, 1, 1))], dim=1).float())
+        
         h_gate_logits = self.arth_gate_nn(m_h_gate_logits.float())
+
+
         h_gate_logits = self.norm_gate(h_gate_logits)  # also learns whether enable arth model
         h_arth_output = self.output_arth(h_for_arth.half()) # for supervised reverse polish notation
+        if self.training_use_std_math:
+        
+            h_for_arth = self.emb_transfer_nn(h_math_std.float())
+        
+        
+            # h_for_arth = self.emb_transfer_nn(torch.cat([h_math_std[:, 1:, :], torch.tile(arth_fill.view(1, 1, -1), (_bsz, 1, 1))], dim=1).float())
         if DEBUG_ENABLE:
             print(">>> h_gate_logits", h_gate_logits)
             print(">>> h_arth_output", torch.argmax(h_arth_output, dim=-1))
@@ -563,18 +578,24 @@ class Transformer(nn.Module):
             # clear cache for real answer generate
             self.disable_cache()
             self.enable_cache()
-            # inject prompt
-            h_new = torch.concat([h, q_new_final], dim=1)
-            q_update_t = torch.tile(q_update.view(-1, 1), (1, self.arth_params.max_seq_len))
+            q_update_t = torch.tile(q_update.view(-1, 1), (1, self.arth_params.max_seq_len))            
             mq_token = arth_result_tokens.to(h.device) * q_update_t.to(h.device)
+            max_q_index = torch.sum((mq_token != 0), axis=-1)
             if DEBUG_ENABLE:
                 print(">>> mq_token", mq_token)
+            self.mq_index = max_q_index[-1].item() # batch size > 1 should have some problems
+            if (self.mq_index > 0):
+                # inject prompt
+                h_new = torch.concat([h, q_new_final], dim=1)
+                # self.mq_index = q_new_final.shape[1]
+            else:
+                h_new = h
             h_new = h_new.to(h)
             for layer_index in range(0, len(self.layers)):
                 freqs_cis_math = self.freqs_cis_math.to(h_new.device)
-                freqs_cis_math = freqs_cis_math[:seqlen + self.arth_params.max_seq_len]
+                freqs_cis_math = freqs_cis_math[:seqlen + self.mq_index]
                 # mask = None
-                mask_math = torch.full((1, 1, seqlen + self.arth_params.max_seq_len, seqlen + self.arth_params.max_seq_len), float("-inf"), device=h_new.device)
+                mask_math = torch.full((1, 1, seqlen + self.mq_index, seqlen + self.mq_index), float("-inf"), device=h_new.device)
                 mask_math = torch.triu(mask_math, diagonal=0 + 1).type_as(h)
                 if layer_index not in self.params.arth_influence_layers:
                     with torch.no_grad():
@@ -588,14 +609,14 @@ class Transformer(nn.Module):
             adapter_index = -1
             for layer_index in range(0, len(self.layers)):
                 freqs_cis_math = self.freqs_cis_math.to(h.device)
-                freqs_cis_math = freqs_cis_math[start_pos + self.arth_params.max_seq_len - 1 : start_pos + self.arth_params.max_seq_len + seqlen - 1]
+                freqs_cis_math = freqs_cis_math[start_pos + self.mq_index - 1 : start_pos + self.mq_index + seqlen - 1]
                 mask = None
                 if layer_index not in self.params.arth_influence_layers:
                     with torch.no_grad():
-                        h = self.layers[layer_index](h, start_pos + self.arth_params.max_seq_len, freqs_cis_math, mask)
+                        h = self.layers[layer_index](h, start_pos + self.mq_index - 1, freqs_cis_math, mask)
                 else:
                     adapter_index = adapter_index + 1
-                    h = self.layers[layer_index](h, start_pos + self.arth_params.max_seq_len, freqs_cis_math, mask, adapter[adapter_index].half())
+                    h = self.layers[layer_index](h, start_pos + self.mq_index - 1, freqs_cis_math, mask, adapter[adapter_index].half())
         h = self.norm(h)
         if full_mode == True:
             output = self.output(h)
@@ -610,3 +631,4 @@ class Transformer(nn.Module):
     def disable_cache(self):
         for layer in self.layers:
             layer.attention.disable_cache()
+        self.mq_index = 0
