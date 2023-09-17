@@ -17,14 +17,15 @@ import json
 class ArthDataGenerator:
     def __init__(self) -> None:
         self.ops = ['+','-','*','/']
-        self.max_decimal_len = 2
-        self.max_integer_len = 2
-        self.max_length = 60
+        self.max_decimal_len = 4
+        self.max_integer_len = 4
+        self.max_length = 120
         self.min_length = 12
         self.joined_char = ' '
-        self.max_op_occur = 10
+        self.max_op_occur = 20
+        self.min_op_occur = 1
         self.high_op_in_mid_ratio = 0.5
-        self.high_op_start = 2
+        self.high_op_start = 1
 
     def generate(self) -> list:
         list_ret=[]
@@ -34,6 +35,7 @@ class ArthDataGenerator:
         last_op = -1
         length = random.randint(self.min_length, self.max_length)
         rand_op_in_mid = random.random()
+        op_occur_limit = random.randint(self.min_op_occur, self.max_op_occur)
         while total_len_now < length:
             if now_op == 0:
                 int_part_size = random.randint(0, self.max_integer_len)
@@ -51,7 +53,7 @@ class ArthDataGenerator:
                 total_len_now += len(list_ret[-1]) + 1
                 if total_len_now + self.max_decimal_len + self.max_integer_len + 1 + 2 * len(self.joined_char) > length: # 1 -> the op
                     break
-                if op_occur >= self.max_op_occur:
+                if op_occur >= op_occur_limit:
                     break
                 now_op = 1
             else:
@@ -129,4 +131,4 @@ def merge_alpaca_and_generate_data(alpace_file_path, out_data_folder, percentage
         dumped_record = next_cut
 
 if __name__ == "__main__":
-    merge_alpaca_and_generate_data('/home/eteced/dl_workspace/stanford_alpaca/alpaca_data.json', '/home/eteced/dl_self_workspace/arithmetic_finetuning_v1/data_split', 0.4, 50)
+    merge_alpaca_and_generate_data('/home/eteced/dl_workspace/stanford_alpaca/alpaca_data.json', '/home/eteced/dl_self_workspace/arithmetic_finetuning_v1/data_split', 0.6, 50)

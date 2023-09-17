@@ -36,6 +36,7 @@ class ModelArgs:
     arth_insert_layer_after: int = 23
     arth_extra_think_len: int = 32
     arth_extra_token_begin: list = field(default_factory=lambda: [1, 1738, 1433, 386, 3195, 7867, 29901, 259])
+    arth_extra_token_end: int = 395
     adapter_len: int = 64
 
 class RMSNorm(torch.nn.Module):
@@ -337,6 +338,7 @@ class Transformer(nn.Module):
         # h = self.tok_embeddings(tokens)
         arth_prefix_len = len(self.params.arth_extra_token_begin)
         arth_token_prefix = torch.tile(torch.Tensor(self.params.arth_extra_token_begin).long().view(1, -1), (_bsz, 1)).to(h.device)
+        arth_token_ends = self.tok_embeddings(torch.Tensor([self.params.arth_extra_token_end]).long().to(h.device))
         h_ord = h
         adapter_index = -1
         math_adapter_index = -1
@@ -437,8 +439,10 @@ class Transformer(nn.Module):
         for i in range(_bsz):
             h_new[i, :non_ord_prompt_begin[i], :] = h_ord[i, :non_ord_prompt_begin[i], :] # copy the ord token
             mq_index = max_q_index[i].item()
+            # mq_index = q_new_final.shape[1]
             if (mq_index > 0):
                 h_new[i, non_ord_prompt_begin[i]:non_ord_prompt_begin[i] + mq_index, :] = q_new_final[i, :mq_index, :] # copy the arth tokens
+                h_new[i, non_ord_prompt_begin[i] + mq_index - 1, :] = arth_token_ends.view(-1)
             h_new[i, non_ord_prompt_begin[i] + mq_index : mq_index + seqlen, :] = h_ord[i, non_ord_prompt_begin[i]:, :] # copy the answers
         h_new = h_new.to(h)
         for layer_index in range(0, len(self.layers)):
@@ -458,6 +462,7 @@ class Transformer(nn.Module):
         # should know that we have extra self.arth_params.max_seq_len dims before the label. we would like exclude it
         for i in range(_bsz):
             mq_index = max_q_index[i].item()
+            # mq_index = q_new_final.shape[1]
             h[i, :non_ord_prompt_begin[i], :] = h_new[i, :non_ord_prompt_begin[i], :] # copy the ord token
             h[i, non_ord_prompt_begin[i]:, :] = h_new[i, non_ord_prompt_begin[i] + mq_index: mq_index + seqlen, :] # copy the exclude arth token
         h = self.norm(h)
@@ -484,6 +489,7 @@ class Transformer(nn.Module):
             # h = self.tok_embeddings(tokens)
             arth_prefix_len = len(self.params.arth_extra_token_begin)
             arth_token_prefix = torch.tile(torch.Tensor(self.params.arth_extra_token_begin).long().view(1, -1), (_bsz, 1)).to(h.device)
+            arth_token_ends = self.tok_embeddings(torch.Tensor([self.params.arth_extra_token_end]).long().to(h.device))
             h_ord = h
             h_for_math = h
             non_ord_prompt_begin = h.shape[1]
@@ -581,10 +587,13 @@ class Transformer(nn.Module):
             q_update_t = torch.tile(q_update.view(-1, 1), (1, self.arth_params.max_seq_len))            
             mq_token = arth_result_tokens.to(h.device) * q_update_t.to(h.device)
             max_q_index = torch.sum((mq_token != 0), axis=-1)
+            # mq_index = q_new_final.shape[1]
             if DEBUG_ENABLE:
                 print(">>> mq_token", mq_token)
             self.mq_index = max_q_index[-1].item() # batch size > 1 should have some problems
+            # self.mq_index = mq_index
             if (self.mq_index > 0):
+                q_new_final[:, -1, :] = arth_token_ends.view(1, -1)
                 # inject prompt
                 h_new = torch.concat([h, q_new_final], dim=1)
                 # self.mq_index = q_new_final.shape[1]

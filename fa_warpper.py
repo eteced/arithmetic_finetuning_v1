@@ -5,21 +5,30 @@ import time
 
 DATA_SPLIT_FLODER='./data_split/'
 DATA_SPLIT_NUM = 1456
-TOTAL_EPOCH_ORIGIN = 5
+TOTAL_EPOCH_ORIGIN = 30
 # CHECKPOINT_FOLDER='./checkpoint/'
 FINAL_CHECKPOINT='./checkpoint/'
 CHECKPOINT_FOLDER='/mnt/tmp/'
-CHECKPOINT_START_SPLIT_EPOCH=4
-DATA_SET_OFFSET = 1095
+# DAO 3087
+# -2DAO 3870
+# mid->hard 4256
+# hard->old 4511
+# old 4751 -> BLR = 0.03, 5times
+# old->hard 5009 BLR = 0.03, 5times
+# hard->new_h 5109, BLR = 0.03, 5times
+# new_h->from1_3, 5240, BLR = 0.03, 5times
+# from1_3 -> from1_20, 5617, BLR = 0.03, 5times
+CHECKPOINT_START_SPLIT_EPOCH=5693
+DATA_SET_OFFSET = 0
 EPOCH_BASE = 0
-EVAL_APPEND = ' --eval True'
+# EVAL_APPEND = ' --eval True'
 REAL_SAVE_CHECKPOINT = 10
-# EVAL_APPEND = ''
-EARLY_LOOP = 10
+EVAL_APPEND = ''
+EARLY_LOOP = 5
 LOOP_DATA_NUM = 1
 
-os_cmd = "torchrun --nproc_per_node 1 finetuning_arthllama.py     --model Arth_Llama7B     --llama_model_path /home/eteced/dl_workspace/model_repo.folder/llama_ord/     --data_path {}     --arth_model_path ./checkpoint/     --max_seq_len 512     --batch_size 1     --epochs {}  --start_epoch {}  --warmup_epochs 2     --blr 0.025     --weight_decay 0.02     --output_dir {} --device cuda --resume {} "
-os_cmd_nocheckpoint = "torchrun --nproc_per_node 1 finetuning_arthllama.py     --model Arth_Llama7B     --llama_model_path /home/eteced/dl_workspace/model_repo.folder/llama_ord/     --data_path {}     --arth_model_path ./checkpoint/     --max_seq_len 512     --batch_size 1     --epochs {}  --start_epoch {}  --warmup_epochs 2     --blr 0.025    --weight_decay 0.02     --output_dir {} --device cuda"
+os_cmd = "torchrun --nproc_per_node 1 finetuning_arthllama.py     --model Arth_Llama7B     --llama_model_path /home/eteced/dl_workspace/model_repo.folder/llama_ord/     --data_path {}     --arth_model_path ./checkpoint/     --max_seq_len 512     --batch_size 1     --epochs {}  --start_epoch {}  --warmup_epochs 2     --blr 0.03     --weight_decay 0.02     --output_dir {} --device cuda --resume {} "
+os_cmd_nocheckpoint = "torchrun --nproc_per_node 1 finetuning_arthllama.py     --model Arth_Llama7B     --llama_model_path /home/eteced/dl_workspace/model_repo.folder/llama_ord/     --data_path {}     --arth_model_path ./checkpoint/     --max_seq_len 512     --batch_size 1     --epochs {}  --start_epoch {}  --warmup_epochs 2     --blr 0.03    --weight_decay 0.02     --output_dir {} --device cuda"
 
 ckpt_start = CHECKPOINT_START_SPLIT_EPOCH
 for i in range(DATA_SPLIT_NUM * TOTAL_EPOCH_ORIGIN):

@@ -165,9 +165,9 @@ class LLaMA:
             if DEBUG_MODE:
                 print('in', tokens)
             prev_pos = cur_pos
-        print("tokens.shape", tokens.shape)
-        print("tokens", tokens)
-        print('max_start_pos', max_start_pos)
+        # print("tokens.shape", tokens.shape)
+        # print("tokens", tokens)
+        # print('max_start_pos', max_start_pos)
 
 
         # logits = self.model.forward_inference(tokens, 0, 0, full_mode=True)

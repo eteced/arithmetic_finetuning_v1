@@ -50,7 +50,7 @@ def generate_stream(model, params):
     """Adapted from fastchat/serve/model_worker.py::generate_stream"""
 
     prompt = params["prompt"]
-    len(prompt)
+    start_pos = len(prompt)
     temperature = float(params.get("temperature", -1.0))
     top_p = float(params.get("top_p", 0.95))
     max_new_tokens = int(params.get("max_new_tokens", 256))
@@ -63,6 +63,7 @@ def generate_stream(model, params):
             temperature=temperature,
         )
     decoded = decoded[0]
+    decoded = decoded[start_pos:]
 
     pos = decoded.find(stop_str)
     if pos != -1:

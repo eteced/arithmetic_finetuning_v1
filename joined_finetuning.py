@@ -140,7 +140,7 @@ def loss_generate(output, h_gate_logits, h_arth_output, m_h_arth_output, labels,
         print('h_arth_output', torch.argmax(h_arth_output, dim=-1))
         print("swift_tokens_calc", swift_tokens_calc)
         print('swift_valids', swift_valids)
-    if torch.sum(swift_tokens_calc) > 0:
+    if torch.sum(swift_valids) > 0:
         # all ignore labels will let normal_criterion produce nan
         # loss_arth_mid_result = torch.mean(normal_criterion(h_arth_output, swift_tokens_calc.to(h_arth_output.device)) * swift_valids.to(h_arth_output))  *  50
         loss_arth_mid_result = torch.mean(aux_criterion(h_arth_output, swift_tokens_calc.to(h_arth_output.device)) * swift_valids.to(h_arth_output))  *  50
@@ -150,7 +150,7 @@ def loss_generate(output, h_gate_logits, h_arth_output, m_h_arth_output, labels,
     if big_debug:
         print("loss_arth_mid_result", loss_arth_mid_result)
     arth_tau = 0.1
-    if enable_arthstep:
+    if enable_arthstep and torch.sum(swift_valids) > 0:
         loss_cp = torch.nn.CrossEntropyLoss()
         for tt in range(swift_tokens.shape[0]):
             l_steps_ignore_logits, l_steps_tmp_moved_logits, l_steps_dense_op_logits, l_steps_dense_map_logits, l_steps_decimal_start_logits, l_steps_op_pred = gen_manual_aux_info(swift_tokens, tt)
